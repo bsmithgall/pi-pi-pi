@@ -70,7 +70,10 @@ export class DiffViewer {
 
     for (let i = 0; i < renderedLines.length; i++) {
       const lineIdx = this.lines.length;
-      const line = renderedLines[i];
+      // Replace tabs with spaces to avoid terminal tab-stop expansion mismatches.
+      // pi-tui's visibleWidth counts tabs as 3 columns, but terminals expand them
+      // to 8 (or the next tab stop), causing lines to overflow the box border.
+      const line = renderedLines[i].replaceAll("\t", "   ");
       const raw = rawLines[i] ?? "";
 
       if (raw.startsWith("@@")) {
