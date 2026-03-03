@@ -1,4 +1,4 @@
 {
-  "cycleModelForward": ["ctrl+]"],
-  "cycleModelBackward": ["ctrl+["]
+  "cycleModelForward": ["ctrl+}"],
+  "cycleModelBackward": ["ctrl+{"]
 }

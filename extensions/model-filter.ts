@@ -1,22 +1,22 @@
 /**
  * Model Filter Extension
  *
- * Replaces the default Ctrl+[ / Ctrl+] model cycle with a filtered cycle that
+ * Replaces the default Ctrl+{ / Ctrl+} model cycle with a filtered cycle that
  * only steps through the latest generation of each Anthropic model family
  * (Haiku → Sonnet → Opus). "Latest" is determined dynamically at startup by
  * inspecting available models, so no hardcoded IDs need updating when pi adds
  * newer versions.
  *
  * The keybindings.json in this repo already remaps cycleModelForward /
- * cycleModelBackward to Ctrl+] / Ctrl+[. This extension intercepts those same
+ * cycleModelBackward to Ctrl+} / Ctrl+{. This extension intercepts those same
  * keys via registerShortcut (which takes priority over keybinding actions) and
  * replaces the built-in cycle behaviour with the filtered one.
  *
  * Note: the full /model picker is unaffected — this only changes cycling.
  */
 
+import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { Model, Api } from "@mariozechner/pi-ai";
 
 // Families to include, in cycle order.
 const FAMILIES = ["haiku", "sonnet", "opus"] as const;
@@ -68,12 +68,12 @@ export default function modelFilterExtension(pi: ExtensionAPI): void {
   // Register shortcuts on the same keys that keybindings.json assigns to
   // cycleModelForward / cycleModelBackward. registerShortcut handlers fire
   // before keybinding actions, so these intercept the cycle completely.
-  pi.registerShortcut("ctrl+]", {
+  pi.registerShortcut("ctrl+}", {
     description: "Cycle to next model (filtered: Haiku → Sonnet → Opus)",
     handler: (ctx) => cycleModel(ctx, +1),
   });
 
-  pi.registerShortcut("ctrl+[", {
+  pi.registerShortcut("ctrl+{", {
     description: "Cycle to previous model (filtered: Opus → Sonnet → Haiku)",
     handler: (ctx) => cycleModel(ctx, -1),
   });

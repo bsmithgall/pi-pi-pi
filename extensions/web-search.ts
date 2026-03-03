@@ -14,17 +14,15 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
+import { Type } from "@sinclair/typebox";
 
 const SEARCH_MODEL_ID = "claude-haiku-4-5";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MAX_USES = 5;
 const MAX_TOKENS = 2048;
 
-type SearchResult =
-  | { ok: true; text: string }
-  | { ok: false; error: string };
+type SearchResult = { ok: true; text: string } | { ok: false; error: string };
 
 async function runWebSearch(
   query: string,
@@ -97,7 +95,9 @@ async function runWebSearch(
   }
 
   const text = (parsed.content ?? [])
-    .filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+    .filter(
+      (b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string",
+    )
     .map((b) => b.text)
     .join("\n\n")
     .trim();
@@ -123,11 +123,13 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       }),
     }),
 
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const model = ctx.modelRegistry.find("anthropic", SEARCH_MODEL_ID);
       if (!model) {
         return {
-          content: [{ type: "text", text: `Error: model ${SEARCH_MODEL_ID} not found in registry` }],
+          content: [
+            { type: "text", text: `Error: model ${SEARCH_MODEL_ID} not found in registry` },
+          ],
           details: { query: params.query, error: "model not found" },
           isError: true,
         };
@@ -174,7 +176,9 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
     },
 
     renderResult(result, { expanded, isPartial }, theme) {
-      const details = result.details as { query?: string; result?: string; error?: string; status?: string } | undefined;
+      const details = result.details as
+        | { query?: string; result?: string; error?: string; status?: string }
+        | undefined;
 
       if (isPartial) {
         const query = details?.query ?? "";
