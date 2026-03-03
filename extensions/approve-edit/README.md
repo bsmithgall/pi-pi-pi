@@ -7,6 +7,7 @@ syntax-highlighted diff overlay for approval before changes are applied.
 
 - **Review Mode**: Pause before every file change for approval, rejection, or modification
 - **Auto Mode**: Let changes apply normally without interruption
+- **Bash Gate**: After a rejection, all bash commands require confirmation until the next user input
 - **Syntax Highlighting**: Full language-aware syntax highlighting in diffs
 - **External Editor**: Edit proposed changes in your preferred editor with diff view
 - **Session Persistence**: Mode preference survives `/reload` and session restore
@@ -88,6 +89,25 @@ quit. The extension detects whether you modified the content:
 - **Unmodified**: Treated as an approve, tool runs normally
 - **Cancelled**: Treated as a rejection
 
+## Bash Gate
+
+When you reject an edit (or cancel in the external editor), the extension
+activates a **bash gate**: every subsequent `bash` tool call requires explicit
+confirmation via a dialog until the next user input.
+
+This prevents the agent from circumventing a rejection by using shell commands
+to modify files (e.g., `sed -i`, `echo >`, `python3 -c 'open(...).write(...)'`,
+`patch`, `tee`, heredocs, etc.). The system prompt already tells the agent not
+to do this, but the bash gate enforces it programmatically.
+
+The gate clears automatically when you send your next message, since at that
+point you're back in control of the conversation.
+
+**Why not just block bash entirely?** Read-only commands like `grep`, `git diff`,
+and `ls` are useful even after a rejection — the agent may need them to
+understand what you want instead. The confirmation dialog lets harmless commands
+through with a single keystroke while catching file-modifying ones.
+
 ## Tool Override Behavior
 
 In **review mode**:
@@ -137,12 +157,23 @@ Parallel edits are serialized via a promise-based review lock. This ensures:
 - Edits queue up fairly
 - The agent waits for approval before proceeding
 
+### Bash Gate
+
+After a rejection, the extension sets a `bashGated` flag (in `state.ts`). While
+active, the `tool_call` handler intercepts bash calls and shows a confirmation
+dialog. The flag is cleared by the `input` event handler when the user sends
+their next message. This creates a layered defense:
+
+1. **System prompt** — tells the agent not to use bash for file modifications
+2. **Bash gate** — programmatically catches attempts the agent makes anyway
+3. **Edit/write interception** — the core approval flow for file-modifying tools
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `index.ts` | Entry point — tool_call hook, tool overrides, shortcut, command, high-level flow |
-| `state.ts` | Mode toggle, footer rendering, session persistence via appendEntry |
+| `state.ts` | Mode toggle, bash gate state, footer rendering, session persistence via appendEntry |
 | `diff.ts` | Myers diff algorithm → unified diff in renderDiff format |
 | `DiffViewer.ts` | Scrollable TUI overlay with cursor, vim keybindings, action selection |
 | `editor.ts` | External editor integration with diff mode detection and temp file handling |

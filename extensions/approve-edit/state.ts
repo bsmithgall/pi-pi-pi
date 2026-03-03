@@ -4,6 +4,10 @@
  * Holds the current mode (review/auto) in a module-level variable, provides
  * toggle/persist/restore helpers, and updates the footer status indicator.
  * Mode persists across /reload and session restore via pi.appendEntry().
+ *
+ * Also manages "bash gate" state: after an edit rejection, all bash tool calls
+ * require user confirmation until the next user input. This prevents the agent
+ * from circumventing a rejection via shell commands (sed -i, echo >, etc.).
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -28,6 +32,24 @@ interface CustomSessionEntry {
 
 let currentMode: ApproveEditMode = "auto";
 let currentTui: { requestRender(force?: boolean): void } | null = null;
+
+/**
+ * Bash gate: when true, all bash tool calls require user confirmation.
+ * Set after an edit/write rejection, cleared on next user input.
+ */
+let bashGated = false;
+
+export function isBashGated(): boolean {
+  return bashGated;
+}
+
+export function enableBashGate(): void {
+  bashGated = true;
+}
+
+export function clearBashGate(): void {
+  bashGated = false;
+}
 
 /** Trigger a footer re-render — call this when model changes. */
 export function triggerFooterRender(): void {

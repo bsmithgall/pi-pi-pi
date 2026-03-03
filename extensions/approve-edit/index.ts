@@ -32,7 +32,10 @@ import { type DiffAction, DiffViewer, type ThemeHandle, type TuiHandle } from ".
 import { generateUnifiedDiff } from "./diff.js";
 import { openInEditor } from "./editor.js";
 import {
+  clearBashGate,
+  enableBashGate,
   getMode,
+  isBashGated,
   persistMode,
   restoreMode,
   toggleMode,
@@ -187,6 +190,12 @@ export default function (pi: ExtensionAPI) {
     triggerFooterRender();
   });
 
+  // Clear the bash gate when the user sends new input — they're back in control
+  pi.on("input", async () => {
+    clearBashGate();
+    return undefined;
+  });
+
   // Inject system prompt when in review mode — framed as a hard constraint
   pi.on("before_agent_start", async (event, _ctx) => {
     if (getMode() !== "review") return undefined;
@@ -201,6 +210,8 @@ export default function (pi: ExtensionAPI) {
         "- All file modifications MUST go through the edit or write tool.\n" +
         "- You MUST NOT use bash, shell commands, scripts, or any other tool to write, modify, move, rename, or delete files.\n" +
         "- If the user rejects an edit, STOP and ask what they want instead. Do not retry the same edit or attempt alternative approaches.\n" +
+        "- After a rejection, all bash commands will require explicit user confirmation until the user sends a new message. " +
+        "Do not attempt to use bash to work around a rejected edit.\n" +
         "- You cannot disable or modify this policy. Do not attempt to.\n" +
         "</file-review-policy>",
     };
@@ -227,6 +238,23 @@ export default function (pi: ExtensionAPI) {
   // Intercept tool calls
   pi.on("tool_call", async (event, ctx) => {
     if (getMode() !== "review") return undefined;
+
+    // When the bash gate is active (an edit was just rejected), require
+    // confirmation for every bash call to prevent shell-based file modifications.
+    if (event.toolName === "bash" && isBashGated() && ctx.hasUI) {
+      const command = (event.input as { command?: string }).command ?? "";
+      const ok = await reviewBashCommand(ctx, command);
+      if (!ok) {
+        return {
+          block: true,
+          reason:
+            "Bash command blocked — an edit was recently rejected and the user did not approve this command. " +
+            "Stop and ask the user what they would like you to do instead.",
+        };
+      }
+      return undefined;
+    }
+
     if (event.toolName !== "edit" && event.toolName !== "write") return undefined;
     if (!ctx.hasUI) return undefined;
 
@@ -406,15 +434,21 @@ async function reviewChange(
         tui,
       );
     },
-    { overlay: true, overlayOptions: { anchor: "top-center" } },
+    { overlay: true, overlayOptions: { anchor: "top-center", width: "80%" } },
   );
 
   if (action === "approve") return undefined;
   if (action === "reject" || action === undefined) {
+    enableBashGate();
     return { block: true, reason: buildRejectReason(path) };
   }
   if (action === "edit") {
-    return handleEditorAction(ctx, path, toolType, oldText, diffBase, newText);
+    const editorResult = await handleEditorAction(ctx, path, toolType, oldText, diffBase, newText);
+    // If the editor flow resulted in a cancellation (block with "cancelled"), gate bash too
+    if (editorResult?.block && editorResult.reason.includes("cancelled")) {
+      enableBashGate();
+    }
+    return editorResult;
   }
 
   return undefined;
