@@ -1,20 +1,21 @@
 /**
  * Model Filter Extension
  *
- * Adds Ctrl+} / Ctrl+{ shortcuts that cycle through only the latest generation
- * of each Anthropic model family (Haiku → Sonnet → Opus). "Latest" is
- * determined dynamically at startup by inspecting available models, so no
+ * Adds Alt+Shift+. / Alt+Shift+, shortcuts that cycle through only the latest
+ * generation of each Anthropic model family (Haiku → Sonnet → Opus). "Latest"
+ * is determined dynamically at startup by inspecting available models, so no
  * hardcoded IDs need updating when pi adds newer versions.
  *
  * The built-in cycleModelForward / cycleModelBackward actions are disabled in
  * keybindings.json (bound to []), so Ctrl+P / Ctrl+N are free for emacs-style
- * cursor movement. This extension independently owns Ctrl+} / Ctrl+{.
+ * cursor movement. This extension independently owns Alt+Shift+. / Alt+Shift+,.
  *
  * Note: the full /model picker is unaffected — this only adds cycle shortcuts.
  */
 
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Key } from "@mariozechner/pi-tui";
 
 // Families to include, in cycle order.
 const FAMILIES = ["haiku", "sonnet", "opus"] as const;
@@ -41,42 +42,18 @@ function isDateStampVariant(id: string, family: string): boolean {
   return tail.split("-").some((p) => p.length === 8 && /^\d+$/.test(p));
 }
 
-function buildCycleList(available: Model<Api>[]): Model<Api>[] {
-  const result: Model<Api>[] = [];
-
-  for (const family of FAMILIES) {
-    const candidates = available.filter(
-      (m) =>
-        m.provider === "anthropic" &&
-        m.id.startsWith(`claude-${family}-`) &&
-        !isDateStampVariant(m.id, family),
-    );
-
-    if (candidates.length === 0) continue;
-
-    // Sort descending by version, pick the highest
-    candidates.sort((a, b) => versionKey(b.id).localeCompare(versionKey(a.id)));
-    result.push(candidates[0]);
-  }
-
-  return result;
-}
-
 export default function modelFilterExtension(pi: ExtensionAPI): void {
-  // Register shortcuts on the same keys that keybindings.json assigns to
-  // cycleModelForward / cycleModelBackward. registerShortcut handlers fire
-  // before keybinding actions, so these intercept the cycle completely.
-  pi.registerShortcut("ctrl+}", {
+  pi.registerShortcut(Key.shiftAlt("."), {
     description: "Cycle to next model (filtered: Haiku → Sonnet → Opus)",
     handler: (ctx) => cycleModel(ctx, +1),
   });
 
-  pi.registerShortcut("ctrl+{", {
+  pi.registerShortcut(Key.shiftAlt(","), {
     description: "Cycle to previous model (filtered: Opus → Sonnet → Haiku)",
     handler: (ctx) => cycleModel(ctx, -1),
   });
 
-  async function cycleModel(ctx: ExtensionContext, direction: 1 | -1): Promise<void> {
+  function cycleModel(ctx: ExtensionContext, direction: 1 | -1): void {
     const cycleList = buildCycleList(ctx.modelRegistry.getAvailable());
 
     if (cycleList.length === 0) {
@@ -96,9 +73,33 @@ export default function modelFilterExtension(pi: ExtensionAPI): void {
         : (currentIndex + direction + cycleList.length) % cycleList.length;
 
     const next = cycleList[nextIndex];
-    const success = await pi.setModel(next);
-    if (!success) {
-      ctx.ui.notify(`No API key available for ${next.id}`, "error");
-    }
+    pi.setModel(next).then((success) => {
+      if (!success) {
+        ctx.ui.notify(`No API key available for ${next.id}`, "error");
+      } else {
+        ctx.ui.setStatus("model-filter", undefined);
+      }
+    });
   }
+}
+
+function buildCycleList(models: Model<Api>[]): Model<Api>[] {
+  const result: Model<Api>[] = [];
+
+  for (const family of FAMILIES) {
+    const candidates = models.filter(
+      (m) =>
+        m.provider === "anthropic" &&
+        m.id.startsWith(`claude-${family}-`) &&
+        !isDateStampVariant(m.id, family),
+    );
+
+    if (candidates.length === 0) continue;
+
+    // Sort descending by version, pick the highest
+    candidates.sort((a, b) => versionKey(b.id).localeCompare(versionKey(a.id)));
+    result.push(candidates[0]);
+  }
+
+  return result;
 }
