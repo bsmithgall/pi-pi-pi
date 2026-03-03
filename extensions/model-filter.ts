@@ -1,18 +1,16 @@
 /**
  * Model Filter Extension
  *
- * Replaces the default Ctrl+{ / Ctrl+} model cycle with a filtered cycle that
- * only steps through the latest generation of each Anthropic model family
- * (Haiku → Sonnet → Opus). "Latest" is determined dynamically at startup by
- * inspecting available models, so no hardcoded IDs need updating when pi adds
- * newer versions.
+ * Adds Ctrl+} / Ctrl+{ shortcuts that cycle through only the latest generation
+ * of each Anthropic model family (Haiku → Sonnet → Opus). "Latest" is
+ * determined dynamically at startup by inspecting available models, so no
+ * hardcoded IDs need updating when pi adds newer versions.
  *
- * The keybindings.json in this repo already remaps cycleModelForward /
- * cycleModelBackward to Ctrl+} / Ctrl+{. This extension intercepts those same
- * keys via registerShortcut (which takes priority over keybinding actions) and
- * replaces the built-in cycle behaviour with the filtered one.
+ * The built-in cycleModelForward / cycleModelBackward actions are disabled in
+ * keybindings.json (bound to []), so Ctrl+P / Ctrl+N are free for emacs-style
+ * cursor movement. This extension independently owns Ctrl+} / Ctrl+{.
  *
- * Note: the full /model picker is unaffected — this only changes cycling.
+ * Note: the full /model picker is unaffected — this only adds cycle shortcuts.
  */
 
 import type { Api, Model } from "@mariozechner/pi-ai";

@@ -4,27 +4,26 @@ Personal configuration, extensions, and skills for the [pi coding agent](https:/
 
 ## Setup
 
-Run once per machine to symlink config files into `~/.pi/agent/`:
-
 ```bash
-./install.sh
+pi install git:github.com/bsmithgall/pi-pi-pi
 ```
 
-This creates:
-- `~/.pi/agent/keybindings.json` → `keybindings.json`
-
-Then install the package itself so pi loads the extensions:
-
-```bash
-pi install ./
-```
+That's it. The `postinstall` hook in `package.json` runs `install.mjs` automatically,
+which symlinks `keybindings.json` into `~/.pi/agent/`. You can also run
+`node install.mjs` manually at any time if needed.
 
 ## Keybindings
 
 | Action | Key |
 |--------|-----|
-| Cycle model forward | `Ctrl+]` |
-| Cycle model backward | `Ctrl+[` |
+| Cursor up | `Ctrl+P` |
+| Cursor down | `Ctrl+N` |
+| Cycle model forward | `Ctrl+}` (`Ctrl+Shift+]`) |
+| Cycle model backward | `Ctrl+{` (`Ctrl+Shift+[`) |
+
+The default `Ctrl+P` / `Ctrl+N` model cycle actions are disabled so those keys
+are free for emacs-style cursor movement. Model cycling is handled entirely by
+the `model-filter` extension via `Ctrl+{` / `Ctrl+}`.
 
 ## Extensions
 

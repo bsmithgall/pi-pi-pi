@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Personal pi coding agent extensions, skills, keybindings, and settings",
   "type": "module",
+  "scripts": {
+    "postinstall": "node install.mjs"
+  },
   "keywords": [
     "pi-package",
     "pi-extension"

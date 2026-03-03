@@ -1,4 +1,6 @@
 {
-  "cycleModelForward": ["ctrl+}"],
-  "cycleModelBackward": ["ctrl+{"]
+  "cycleModelForward": [],
+  "cycleModelBackward": [],
+  "cursorUp": ["up", "ctrl+p"],
+  "cursorDown": ["down", "ctrl+n"]
 }
