@@ -4,7 +4,9 @@
   "description": "Personal pi coding agent extensions, skills, keybindings, and settings",
   "type": "module",
   "scripts": {
-    "postinstall": "node install.mjs"
+    "postinstall": "node install.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "pi-package",
@@ -24,6 +26,7 @@
     "@mariozechner/pi-tui": "*"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.5"
+    "@biomejs/biome": "^2.4.5",
+    "vitest": "^4.0.18"
   }
 }

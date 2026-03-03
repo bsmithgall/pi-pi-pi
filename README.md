@@ -18,12 +18,13 @@ which symlinks `keybindings.json` into `~/.pi/agent/`. You can also run
 |--------|-----|
 | Cursor up | `Ctrl+P` |
 | Cursor down | `Ctrl+N` |
-| Cycle model forward | `Ctrl+}` (`Ctrl+Shift+]`) |
-| Cycle model backward | `Ctrl+{` (`Ctrl+Shift+[`) |
+| Cycle model forward | `Alt+Shift+.` |
+| Cycle model backward | `Alt+Shift+,` |
+| Toggle review mode | `Ctrl+Shift+A` |
 
 The default `Ctrl+P` / `Ctrl+N` model cycle actions are disabled so those keys
 are free for emacs-style cursor movement. Model cycling is handled entirely by
-the `model-filter` extension via `Ctrl+{` / `Ctrl+}`.
+the `model-filter` extension via `Alt+Shift+.` / `Alt+Shift+,`.
 
 ## Extensions
 
@@ -45,3 +46,33 @@ it reuses the same Anthropic credentials already configured in pi.
 
 Returns a concise summary with source URLs. The tool result is collapsible
 in the TUI (`Ctrl+O` to expand).
+
+### `approve-edit`
+
+Interactive approval system for file modifications. Toggle between review mode
+and auto-approve with `Ctrl+Shift+A`.
+
+**Modes:**
+- **Review** (`●`): Every edit shows a diff overlay for approval
+- **Auto** (`○`): Edits apply automatically (default)
+
+In review mode, use `y` to approve, `n` to reject, or `e` to edit in `$EDITOR`
+before applying. The agent receives feedback about rejections and modifications,
+with a system prompt that prevents it from bypassing rejections.
+
+## Skills
+
+### `pr-review`
+
+Deep code review of GitHub or GitHub Enterprise pull requests. Loads full file
+context in an isolated git worktree.
+
+**Usage:**
+```bash
+/skill:pr-review <PR-number> [options]
+/skill:pr-review myorg/myrepo <PR-number> "focus on error handling"
+/skill:pr-review --host ghe.company.com myorg/myrepo <PR-number>
+```
+
+The host is auto-detected from the current git repo's `origin` remote, or can
+be overridden with `--host`. Reviews are persistent in `~/.pi/pr-reviews/`.
