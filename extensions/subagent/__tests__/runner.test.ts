@@ -1,6 +1,46 @@
+import { PassThrough } from "node:stream";
+import type { Message } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { applyRunEvent, buildAgentArgs, parseRunEvent } from "../helpers.js";
+import type { ChildLike } from "../runner.js";
+import { linesFrom } from "../runner.js";
 import { assistantMsg, toolResultMsg, zeroUsage } from "./fixtures.js";
+
+// ── helpers for ChildLike fakes ──────────────────────────────────────────────
+
+/** Create a fake ChildLike whose stdout and close/error events we control. */
+function fakeChild(): {
+  child: ChildLike;
+  stdout: PassThrough;
+  emitClose: (code: number) => void;
+  emitError: (err: Error) => void;
+} {
+  const stdout = new PassThrough();
+  const listeners: {
+    close: Array<(code: number | null) => void>;
+    error: Array<(err: Error) => void>;
+  } = {
+    close: [],
+    error: [],
+  };
+  const child: ChildLike = {
+    stdout,
+    on(event: string, cb: (...args: never[]) => void) {
+      if (event === "close") listeners.close.push(cb as (code: number | null) => void);
+      if (event === "error") listeners.error.push(cb as (err: Error) => void);
+    },
+  };
+  return {
+    child,
+    stdout,
+    emitClose: (code) => {
+      for (const cb of listeners.close) cb(code);
+    },
+    emitError: (err) => {
+      for (const cb of listeners.error) cb(err);
+    },
+  };
+}
 
 describe("buildAgentArgs", () => {
   it("always includes the base flags", () => {
@@ -189,5 +229,106 @@ describe("applyRunEvent", () => {
       applyRunEvent({ type: "tool_result_end", message: toolResultMsg() }, [], usage);
       expect(usage).toEqual(zeroUsage());
     });
+  });
+});
+
+// ── linesFrom ────────────────────────────────────────────────────────────────
+
+describe("linesFrom", () => {
+  it("yields newline-delimited lines from stdout", async () => {
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+    stdout.write("line1\nline2\n");
+    stdout.end();
+    emitClose(0);
+
+    const lines: string[] = [];
+    for await (const line of stream) lines.push(line);
+    expect(lines).toEqual(["line1", "line2"]);
+    expect(await stream.exitCode).toBe(0);
+  });
+
+  it("yields a trailing partial line (no final newline)", async () => {
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+    stdout.write("complete\npartial");
+    stdout.end();
+    emitClose(0);
+
+    const lines: string[] = [];
+    for await (const line of stream) lines.push(line);
+    expect(lines).toEqual(["complete", "partial"]);
+  });
+
+  it("resolves exitCode with the close code", async () => {
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+    stdout.end();
+    emitClose(42);
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+    expect(await stream.exitCode).toBe(42);
+  });
+
+  it("resolves exitCode as 1 on error event", async () => {
+    const { child, stdout, emitError } = fakeChild();
+    const stream = linesFrom(child);
+    stdout.end();
+    emitError(new Error("spawn ENOENT"));
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+    expect(await stream.exitCode).toBe(1);
+  });
+
+  it("does not hang when close fires before stdout is drained", async () => {
+    // This is the race condition that caused parallel mode to hang.
+    // Simulate: close fires immediately, then stdout data arrives and ends.
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+
+    // Close fires BEFORE any stdout data — the generator hasn't started yet
+    emitClose(0);
+
+    // Now push data and end stdout
+    stdout.write("data\n");
+    stdout.end();
+
+    const lines: string[] = [];
+    // This must complete without hanging — before the fix it would block forever
+    for await (const line of stream) lines.push(line);
+    expect(lines).toEqual(["data"]);
+    expect(await stream.exitCode).toBe(0);
+  });
+
+  it("does not hang when close fires between stdout chunks", async () => {
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+
+    // Write some data, fire close, then end stdout
+    stdout.write("first\n");
+    emitClose(0);
+    stdout.write("second\n");
+    stdout.end();
+
+    const lines: string[] = [];
+    for await (const line of stream) lines.push(line);
+    expect(lines).toEqual(["first", "second"]);
+    expect(await stream.exitCode).toBe(0);
+  });
+
+  it("handles empty stdout with immediate close", async () => {
+    const { child, stdout, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+    emitClose(0);
+    stdout.end();
+
+    const lines: string[] = [];
+    for await (const line of stream) lines.push(line);
+    expect(lines).toEqual([]);
+    expect(await stream.exitCode).toBe(0);
   });
 });
