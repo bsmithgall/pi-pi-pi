@@ -47,6 +47,26 @@ it reuses the same Anthropic credentials already configured in pi.
 Returns a concise summary with source URLs. The tool result is collapsible
 in the TUI (`Ctrl+O` to expand).
 
+### `subagent`
+
+Delegates tasks to general-purpose subagents running in isolated `pi` processes. Agents are
+defined **inline in the tool call** — no pre-registered agent files required. Specify the
+model, tool set, and an optional system prompt per-agent.
+
+**Modes:**
+
+| Mode | Parameters | Description |
+|------|-----------|-------------|
+| Single | `agent` + `task` | One agent, one task |
+| Parallel | `tasks` array | Multiple agents run concurrently (max 8, 4 at once) |
+| Chain | `chain` array | Sequential steps; use `{previous}` placeholder for prior output |
+
+**Typical uses:**
+- Fast codebase exploration: `{ model: "claude-haiku-4-5", tools: ["read","grep","find","ls"] }`
+- Parallel research: several Sonnet agents investigating independent areas simultaneously
+- Focused planning: agent with a tailored system prompt and read-only tools
+- Multi-step workflows: chain mode where each agent builds on the prior output
+
 ### `approve-edit`
 
 Interactive approval system for file modifications. Toggle between review mode
