@@ -38,8 +38,8 @@ import {
   isBashGated,
   persistMode,
   restoreMode,
+  syncStatus,
   toggleMode,
-  triggerFooterRender,
   updateFooter,
 } from "./state.js";
 
@@ -182,12 +182,15 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     restoreMode(ctx);
     updateFooter(ctx);
+    syncStatus(ctx);
     registerToolOverrides();
   });
 
-  // Re-render the footer whenever the model changes
-  pi.on("model_select", async () => {
-    triggerFooterRender();
+  // Re-render the footer whenever the model changes.
+  // syncStatus calls ctx.ui.setStatus(), which triggers a re-render through
+  // pi's own machinery — no escaped tui reference needed.
+  pi.on("model_select", async (_event, ctx) => {
+    syncStatus(ctx);
   });
 
   // Clear the bash gate when the user sends new input — they're back in control
@@ -220,7 +223,7 @@ export default function (pi: ExtensionAPI) {
   async function toggleModeAndRefresh(ctx: ExtensionContext): Promise<void> {
     const newMode = toggleMode();
     persistMode(pi);
-    updateFooter(ctx);
+    syncStatus(ctx);
     registerToolOverrides();
     ctx.ui.notify(`approve-edit: ${newMode} mode`, "info");
   }

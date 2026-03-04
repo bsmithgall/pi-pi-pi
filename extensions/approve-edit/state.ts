@@ -31,7 +31,6 @@ interface CustomSessionEntry {
 }
 
 let currentMode: ApproveEditMode = "auto";
-let currentTui: { requestRender(force?: boolean): void } | null = null;
 
 /**
  * Bash gate: when true, all bash tool calls require user confirmation.
@@ -51,9 +50,13 @@ export function clearBashGate(): void {
   bashGated = false;
 }
 
-/** Trigger a footer re-render — call this when model changes. */
-export function triggerFooterRender(): void {
-  currentTui?.requestRender(true);
+/**
+ * Push the current mode into pi's status machinery under the "approve-edit" key.
+ * setStatus triggers a footer re-render automatically, so this replaces the old
+ * escaped-tui pattern. Call it whenever mode or model changes.
+ */
+export function syncStatus(ctx: ExtensionContext): void {
+  ctx.ui.setStatus("approve-edit", currentMode);
 }
 
 export function getMode(): ApproveEditMode {
@@ -71,19 +74,20 @@ export function toggleMode(): ApproveEditMode {
 
 export function updateFooter(ctx: ExtensionContext): void {
   ctx.ui.setFooter((tui, theme, footerData) => {
-    currentTui = tui;
     const unsub = footerData.onBranchChange(() => tui.requestRender());
 
     return {
       dispose: () => {
-        currentTui = null;
         unsub();
       },
       invalidate() {},
       render(width: number): string[] {
-        // Mode indicator
+        // Mode indicator — read from the status set by syncStatus() so that
+        // setStatus-triggered re-renders always reflect the latest value.
+        // Falls back to currentMode for the first render before syncStatus fires.
+        const rawMode = footerData.getExtensionStatuses().get("approve-edit") ?? currentMode;
         const modeStr =
-          currentMode === "review" ? theme.fg("accent", "● review") : theme.fg("dim", "○ auto");
+          rawMode === "review" ? theme.fg("accent", "● review") : theme.fg("dim", "○ auto");
 
         // Git branch
         const branch = footerData.getGitBranch();
