@@ -10,6 +10,7 @@ import {
   mapWithConcurrencyLimit,
   resolvePreviousPlaceholder,
 } from "../helpers.js";
+import { shouldActivateSubagent } from "../index.js";
 import type { UsageStats } from "../types.js";
 import {
   assistant,
@@ -336,5 +337,42 @@ describe("resolvePreviousPlaceholder", () => {
 
   it("handles empty task", () => {
     expect(resolvePreviousPlaceholder("", "anything")).toBe("");
+  });
+});
+
+describe("shouldActivateSubagent", () => {
+  it.each([
+    "Use a subagent to explore this",
+    "Can you delegate this to a sub-agent?",
+    "Run these tasks in parallel",
+    "Parallelize the search across files",
+    "Parallelise the investigation",
+    "Spawn a worker to check the tests",
+    "Can you fan out across these directories?",
+    "Do this concurrently",
+    "Search concurrently across repos",
+    "Please delegate this work",
+    "Fan-out across the three modules",
+    "Use a sub agent for this",
+  ])("activates for: %s", (text) => {
+    expect(shouldActivateSubagent(text)).toBe(true);
+  });
+
+  it.each([
+    "Fix the bug in the login page",
+    "Read the file and explain it",
+    "Write a test for the helper function",
+    "What does this code do?",
+    "Run the tests",
+    "Search for usages of this function",
+    "",
+  ])("does not activate for: %s", (text) => {
+    expect(shouldActivateSubagent(text)).toBe(false);
+  });
+
+  it("is case-insensitive", () => {
+    expect(shouldActivateSubagent("SUBAGENT do this")).toBe(true);
+    expect(shouldActivateSubagent("Delegate this task")).toBe(true);
+    expect(shouldActivateSubagent("IN PARALLEL please")).toBe(true);
   });
 });

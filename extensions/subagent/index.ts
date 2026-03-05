@@ -5,6 +5,10 @@
  * isolated context window. Agents are defined inline in the tool call —
  * no predefined agent files required.
  *
+ * The subagent tool is registered but kept **inactive** by default. It is only
+ * added to the active tool set when the user's prompt explicitly requests
+ * subagent/delegation, and removed again once the agent finishes.
+ *
  * Supports three modes:
  *   - Single:   { agent: { ... }, task: "..." }
  *   - Parallel: { tasks: [{ agent: { ... }, task: "..." }, ...] }
@@ -29,9 +33,35 @@ import { executeChain, executeParallel, executeSingle } from "./orchestration.js
 import { renderCall, renderResult } from "./render.js";
 import { SubagentParams } from "./types.js";
 
+const TOOL_NAME = "subagent";
+
+/**
+ * Keywords in a user prompt that signal they want subagent delegation.
+ * Matched case-insensitively against the raw input text.
+ */
+const ACTIVATION_PATTERNS = [
+  /\bsubagent\b/i,
+  /\bsub-agent\b/i,
+  /\bsub agent\b/i,
+  /\bdelegate\b/i,
+  /\bin parallel\b/i,
+  /\bparalleli[sz]e\b/i,
+  /\bconcurrent(ly)?\b/i,
+  /\bspawn\b/i,
+  /\bfan[- ]?out\b/i,
+];
+
+export function shouldActivateSubagent(text: string): boolean {
+  return ACTIVATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function removeSubagent(tools: string[]): string[] {
+  return tools.filter((t) => t !== TOOL_NAME);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "subagent",
+    name: TOOL_NAME,
     label: "Subagent",
     description: [
       "Delegate tasks to general-purpose subagents with isolated context windows.",
@@ -86,5 +116,30 @@ export default function (pi: ExtensionAPI) {
     renderResult(result, { expanded }, theme) {
       return renderResult(result as Parameters<typeof renderResult>[0], expanded, theme);
     },
+  });
+
+  // Start with subagent inactive — remove it from the default active tool set.
+  pi.on("session_start", () => {
+    pi.setActiveTools(removeSubagent(pi.getActiveTools()));
+  });
+
+  // Activate the subagent tool when the user's prompt signals delegation intent.
+  pi.on("input", async (event) => {
+    if (shouldActivateSubagent(event.text)) {
+      const active = pi.getActiveTools();
+      if (!active.includes(TOOL_NAME)) {
+        pi.setActiveTools([...active, TOOL_NAME]);
+      }
+    }
+    return { action: "continue" as const };
+  });
+
+  // Deactivate the subagent tool after the agent finishes so it doesn't
+  // leak into subsequent turns where it wasn't requested.
+  pi.on("agent_end", async () => {
+    const active = pi.getActiveTools();
+    if (active.includes(TOOL_NAME)) {
+      pi.setActiveTools(removeSubagent(active));
+    }
   });
 }
