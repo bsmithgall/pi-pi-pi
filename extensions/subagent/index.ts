@@ -80,12 +80,21 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const hasChain = (params.chain?.length ?? 0) > 0;
       const hasTasks = (params.tasks?.length ?? 0) > 0;
-      const hasSingle = Boolean(params.agent && params.task);
+      // Treat { task } without { agent } as single mode with default agent spec,
+      // since models frequently omit the agent key when all its fields are optional.
+      const hasSingle = Boolean(params.task);
       const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+
+      if (modeCount === 0) {
+        throw new Error(
+          "No valid parameters received. This can happen if the tool arguments JSON was malformed. " +
+            'Please retry with: { task: "...", agent: { model: "..." } }',
+        );
+      }
 
       if (modeCount !== 1) {
         throw new Error(
-          "Invalid parameters: provide exactly one of { agent+task }, { tasks }, or { chain }.",
+          "Invalid parameters: provide exactly one of { agent+task }, { task }, { tasks }, or { chain }.",
         );
       }
 
@@ -97,9 +106,9 @@ export default function (pi: ExtensionAPI) {
         return executeParallel(params.tasks, ctx.cwd, signal, onUpdate);
       }
 
-      if (params.agent && params.task) {
+      if (params.task) {
         return executeSingle(
-          { agent: params.agent, task: params.task, cwd: params.cwd },
+          { agent: params.agent ?? {}, task: params.task, cwd: params.cwd },
           ctx.cwd,
           signal,
           onUpdate,
