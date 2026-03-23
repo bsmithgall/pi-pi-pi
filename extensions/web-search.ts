@@ -13,7 +13,11 @@
  * can use to answer the user's question.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ToolRenderResultOptions,
+} from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
@@ -23,6 +27,13 @@ const MAX_USES = 5;
 const MAX_TOKENS = 2048;
 
 type SearchResult = { ok: true; text: string } | { ok: false; error: string };
+
+interface SearchDetails {
+  query: string;
+  result?: string;
+  error?: string;
+  status?: string;
+}
 
 async function runWebSearch(
   query: string,
@@ -117,6 +128,11 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       `Search the internet for current information. Uses Anthropic's native web search ` +
       `via ${SEARCH_MODEL_ID}. Returns a concise summary with source URLs. ` +
       `Use when you need up-to-date facts, documentation, news, or anything not in your training data.`,
+    promptSnippet:
+      "Search the internet for current information via Anthropic web search. Returns a summary with source URLs.",
+    promptGuidelines: [
+      "Use web_search when you need up-to-date facts, documentation, news, or anything not in your training data.",
+    ],
     parameters: Type.Object({
       query: Type.String({
         description: "The search query. Be specific and concise for best results.",
@@ -126,22 +142,12 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const model = ctx.modelRegistry.find("anthropic", SEARCH_MODEL_ID);
       if (!model) {
-        return {
-          content: [
-            { type: "text", text: `Error: model ${SEARCH_MODEL_ID} not found in registry` },
-          ],
-          details: { query: params.query, error: "model not found" },
-          isError: true,
-        };
+        throw new Error(`Model ${SEARCH_MODEL_ID} not found in registry`);
       }
 
       const apiKey = await ctx.modelRegistry.getApiKey(model);
       if (!apiKey) {
-        return {
-          content: [{ type: "text", text: `Error: no API key available for ${SEARCH_MODEL_ID}` }],
-          details: { query: params.query, error: "no api key" },
-          isError: true,
-        };
+        throw new Error(`No API key available for ${SEARCH_MODEL_ID}`);
       }
 
       onUpdate?.({
@@ -152,11 +158,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       const result = await runWebSearch(params.query, apiKey, signal);
 
       if (!result.ok) {
-        return {
-          content: [{ type: "text", text: `Search failed: ${result.error}` }],
-          details: { query: params.query, error: result.error },
-          isError: true,
-        };
+        throw new Error(`Search failed: ${result.error}`);
       }
 
       return {
@@ -165,7 +167,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       };
     },
 
-    renderCall(args, theme) {
+    renderCall(args, theme, _context) {
       const query = typeof args.query === "string" ? args.query : "";
       const preview = query.length > 60 ? `${query.slice(0, 60)}…` : query;
       return new Text(
@@ -175,12 +177,15 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       );
     },
 
-    renderResult(result, { expanded, isPartial }, theme) {
-      const details = result.details as
-        | { query?: string; result?: string; error?: string; status?: string }
-        | undefined;
+    renderResult(
+      result: AgentToolResult<SearchDetails>,
+      _opts: ToolRenderResultOptions,
+      theme,
+      context,
+    ) {
+      const details = result.details;
 
-      if (isPartial) {
+      if (context?.isPartial) {
         const query = details?.query ?? "";
         return new Text(
           theme.fg("toolTitle", "web_search ") + theme.fg("muted", `searching: "${query}"…`),
@@ -189,7 +194,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
         );
       }
 
-      if (result.isError || details?.error) {
+      if (context?.isError || details?.error) {
         return new Text(
           theme.fg("error", `✗ Search failed: ${details?.error ?? "unknown error"}`),
           0,
@@ -202,7 +207,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
         return new Text(theme.fg("muted", "✓ No results"), 0, 0);
       }
 
-      if (expanded) {
+      if (context?.expanded) {
         return new Text(text, 0, 0);
       }
 

@@ -1,6 +1,6 @@
 {
-  "cycleModelForward": [],
-  "cycleModelBackward": [],
-  "cursorUp": ["up", "ctrl+p"],
-  "cursorDown": ["down", "ctrl+n"]
+  "app.model.cycleForward": [],
+  "app.model.cycleBackward": [],
+  "tui.editor.cursorUp": ["up", "ctrl+p"],
+  "tui.editor.cursorDown": ["down", "ctrl+n"]
 }

@@ -75,6 +75,8 @@ export default function (pi: ExtensionAPI) {
       "Good for: fast exploration with Haiku, parallelising independent research with Sonnet,",
       "or focused planning with a trimmed tool set.",
     ].join(" "),
+    promptSnippet:
+      "Delegate tasks to subagents with isolated context windows. Supports single, parallel, and chained execution.",
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -118,12 +120,16 @@ export default function (pi: ExtensionAPI) {
       throw new Error("Invalid parameters.");
     },
 
-    renderCall(args, theme) {
+    renderCall(args, theme, _context) {
       return renderCall(args, theme);
     },
 
-    renderResult(result, { expanded }, theme) {
-      return renderResult(result as Parameters<typeof renderResult>[0], expanded, theme);
+    renderResult(result, _opts, theme, context) {
+      return renderResult(
+        result as Parameters<typeof renderResult>[0],
+        context?.expanded ?? false,
+        theme,
+      );
     },
   });
 

@@ -2,14 +2,25 @@
  * approve-edit: Interactive approve/reject/modify flow for edit and write tool calls.
  *
  * Toggle between review mode and auto-approve mode with Ctrl+Shift+A or /approve-edit.
+ *
+ * In auto mode, the built-in edit/write tools run unmodified with their native
+ * syntax-highlighted diff rendering. In review mode, this extension intercepts
+ * tool_call events and presents a diff overlay for approval/rejection/editing
+ * before allowing the write to proceed.
+ *
+ * Since v0.62.0 of pi, extensions can override built-in tools and inherit the
+ * built-in renderers per-slot. In review mode we only override renderCall (to
+ * show a compact "reviewing" placeholder while the overlay is open) and
+ * renderResult (compact +N -M stat line). In auto mode we don't register any
+ * overrides at all — the built-in tools handle everything.
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import type {
   AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
+  ToolCallEventResult,
   ToolRenderResultOptions,
 } from "@mariozechner/pi-coding-agent";
 import {
@@ -68,6 +79,13 @@ function buildRejectReason(path: string): string {
   );
 }
 
+/** File-review policy rules injected into tool promptGuidelines in review mode. */
+const FILE_REVIEW_GUIDELINES = [
+  "The user requires manual approval for all file changes — this is a hard constraint.",
+  "All file modifications MUST go through the edit or write tool, never bash or other tools.",
+  "If the user rejects an edit, STOP and ask what they want instead. Do not retry or use alternatives.",
+];
+
 export default function (pi: ExtensionAPI) {
   // Create the real tool implementations once
   const cwd = process.cwd();
@@ -75,33 +93,10 @@ export default function (pi: ExtensionAPI) {
   const realWrite = createWriteTool(cwd);
 
   /**
-   * Auto mode: pass execution straight through with no custom rendering,
-   * so the built-in syntax-highlighted diff display is used.
-   */
-  function registerAutoTools(): void {
-    pi.registerTool({
-      name: "edit",
-      label: "Edit",
-      description: realEdit.description,
-      parameters: realEdit.parameters,
-      execute: (toolCallId, params, signal, onUpdate) =>
-        realEdit.execute(toolCallId, params, signal, onUpdate),
-    });
-
-    pi.registerTool({
-      name: "write",
-      label: "Write",
-      description: realWrite.description,
-      parameters: realWrite.parameters,
-      execute: (toolCallId, params, signal, onUpdate) =>
-        realWrite.execute(toolCallId, params, signal, onUpdate),
-    });
-  }
-
-  /**
-   * Review mode: suppress the built-in renderer (renderCall shows a minimal
-   * placeholder while the diff overlay is open), and replace the result
-   * display with a compact git-stat style +N -M summary.
+   * Review mode: register edit/write overrides with compact renderers.
+   * renderCall shows a "reviewing" placeholder while the diff overlay is open.
+   * renderResult shows a compact +N -M stat line. Execution delegates to the
+   * real built-in tool; the actual review gating happens in the tool_call handler.
    */
   function registerReviewTools(): void {
     pi.registerTool({
@@ -109,6 +104,7 @@ export default function (pi: ExtensionAPI) {
       label: "Edit",
       description: realEdit.description,
       parameters: realEdit.parameters,
+      promptGuidelines: FILE_REVIEW_GUIDELINES,
       execute: (toolCallId, params, signal, onUpdate) =>
         realEdit.execute(toolCallId, params, signal, onUpdate),
       renderCall: (args: EditToolInput, theme: Theme) =>
@@ -130,11 +126,11 @@ export default function (pi: ExtensionAPI) {
       label: "Write",
       description: realWrite.description,
       parameters: realWrite.parameters,
+      promptGuidelines: FILE_REVIEW_GUIDELINES,
       execute: async (
         toolCallId: string,
         params: WriteToolInput,
         signal: AbortSignal | undefined,
-        _onUpdate: AgentToolUpdateCallback<WriteToolDetails> | undefined,
       ): Promise<AgentToolResult<WriteToolDetails>> => {
         let existingLines = 0;
         try {
@@ -157,11 +153,44 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  /**
+   * Unregister our tool overrides so the built-in edit/write tools (with
+   * their native syntax-highlighted rendering) are used directly.
+   *
+   * We re-register then immediately unregister with a no-op tool to clear
+   * our previous override from the extension tool registry. pi's tool
+   * resolution falls through to the built-in when no extension tool matches.
+   *
+   * Actually, the simplest approach: re-register with the real tools but
+   * omit renderCall/renderResult so the built-in renderers are inherited.
+   */
+  function unregisterReviewTools(): void {
+    pi.registerTool({
+      name: "edit",
+      label: "Edit",
+      description: realEdit.description,
+      parameters: realEdit.parameters,
+      execute: (toolCallId, params, signal, onUpdate) =>
+        realEdit.execute(toolCallId, params, signal, onUpdate),
+      // No renderCall/renderResult — built-in renderers are inherited
+    });
+
+    pi.registerTool({
+      name: "write",
+      label: "Write",
+      description: realWrite.description,
+      parameters: realWrite.parameters,
+      execute: (toolCallId, params, signal, onUpdate) =>
+        realWrite.execute(toolCallId, params, signal, onUpdate),
+      // No renderCall/renderResult — built-in renderers are inherited
+    });
+  }
+
   function registerToolOverrides(): void {
     if (getMode() === "review") {
       registerReviewTools();
     } else {
-      registerAutoTools();
+      unregisterReviewTools();
     }
   }
 
@@ -199,7 +228,10 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   });
 
-  // Inject system prompt when in review mode — framed as a hard constraint
+  // Inject bash-gating policy into the system prompt when in review mode.
+  // File-modification rules are now handled via promptGuidelines on the tool
+  // overrides, but the bash-gating policy applies to the bash tool, so it
+  // needs to live in the system prompt.
   pi.on("before_agent_start", async (event, _ctx) => {
     if (getMode() !== "review") return undefined;
 
@@ -207,15 +239,9 @@ export default function (pi: ExtensionAPI) {
       systemPrompt:
         event.systemPrompt +
         "\n\n<file-review-policy>\n" +
-        "The user requires manual approval for all file changes. This is a hard constraint that cannot be " +
-        "disabled, bypassed, or worked around.\n\n" +
-        "Rules:\n" +
-        "- All file modifications MUST go through the edit or write tool.\n" +
-        "- You MUST NOT use bash, shell commands, scripts, or any other tool to write, modify, move, rename, or delete files.\n" +
-        "- If the user rejects an edit, STOP and ask what they want instead. Do not retry the same edit or attempt alternative approaches.\n" +
-        "- After a rejection, all bash commands will require explicit user confirmation until the user sends a new message. " +
+        "After a rejection, all bash commands will require explicit user confirmation until the user sends a new message. " +
         "Do not attempt to use bash to work around a rejected edit.\n" +
-        "- You cannot disable or modify this policy. Do not attempt to.\n" +
+        "You cannot disable or modify this policy. Do not attempt to.\n" +
         "</file-review-policy>",
     };
   });
@@ -239,7 +265,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Intercept tool calls
-  pi.on("tool_call", async (event, ctx) => {
+  pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult | undefined> => {
     if (getMode() !== "review") return undefined;
 
     // When the bash gate is active (an edit was just rejected), require
@@ -322,7 +348,7 @@ async function handleEditorAction(
   oldText: string | null,
   diffBase: string,
   newText: string,
-): Promise<{ block: true; reason: string } | undefined> {
+): Promise<ToolCallEventResult | undefined> {
   // Build the full proposed file so the editor opens with full context.
   let proposedFile: string;
   let originalFile: string;
@@ -387,7 +413,7 @@ async function reviewChange(
   oldText: string | null,
   newText: string,
   toolType: "edit" | "write",
-): Promise<{ block: true; reason: string } | undefined> {
+): Promise<ToolCallEventResult | undefined> {
   // diffBase: the left side of the diff (snippet for edit, full file for write)
   let diffBase: string;
   let isNewFile = false;
@@ -448,7 +474,7 @@ async function reviewChange(
   if (action === "edit") {
     const editorResult = await handleEditorAction(ctx, path, toolType, oldText, diffBase, newText);
     // If the editor flow resulted in a cancellation (block with "cancelled"), gate bash too
-    if (editorResult?.block && editorResult.reason.includes("cancelled")) {
+    if (editorResult?.block && editorResult.reason?.includes("cancelled")) {
       enableBashGate();
     }
     return editorResult;
