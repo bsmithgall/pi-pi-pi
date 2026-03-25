@@ -9,7 +9,7 @@ import {
   getFinalOutput,
   isAgentError,
   mapWithConcurrencyLimit,
-  resolveModelId,
+  resolveModel,
   resolvePreviousPlaceholder,
 } from "../helpers.js";
 import { shouldActivateSubagent } from "../index.js";
@@ -379,9 +379,9 @@ describe("shouldActivateSubagent", () => {
   });
 });
 
-// ── resolveModelId ────────────────────────────────────────────────────────────
+// ── resolveModel ──────────────────────────────────────────────────────────────
 
-/** Minimal fake Model for testing resolveModelId. */
+/** Minimal fake Model for testing resolveModel. */
 function fakeModel(id: string): Model<Api> {
   return { id, provider: "anthropic" } as Model<Api>;
 }
@@ -392,39 +392,40 @@ const AVAILABLE_MODELS = [
   fakeModel("claude-opus-4-5"),
 ];
 
-describe("resolveModelId", () => {
-  it.each([
-    ["claude-sonnet-4-5", "claude-sonnet-4-5", "exact match"],
-    ["Claude-Haiku-4-5", "claude-haiku-4-5", "case-insensitive match"],
-    ["CLAUDE-OPUS-4-5", "claude-opus-4-5", "case-insensitive match (all caps)"],
-    ["haiku", "claude-haiku-4-5", "substring match (family name)"],
-    ["sonnet", "claude-sonnet-4-5", "substring match (family name)"],
-    ["opus", "claude-opus-4-5", "substring match (family name)"],
-    ["HAIKU", "claude-haiku-4-5", "substring match is case-insensitive"],
-    ["Sonnet", "claude-sonnet-4-5", "substring match is case-insensitive"],
-  ])("resolves %s → %s (%s)", (requested, expected) => {
-    expect(resolveModelId(requested, AVAILABLE_MODELS)).toBe(expected);
+describe("resolveModel", () => {
+  it("returns the matched model object including provider metadata", () => {
+    const model = resolveModel("claude-haiku-4-5", AVAILABLE_MODELS);
+    expect(model).toMatchObject({ id: "claude-haiku-4-5", provider: "anthropic" });
   });
 
-  it.each([
-    ["gpt-4o", "completely unknown model"],
-    ["nonexistent", "no partial match either"],
-  ])("returns undefined for %s (%s)", (requested) => {
-    expect(resolveModelId(requested, AVAILABLE_MODELS)).toBeUndefined();
+  it("matches fully-qualified provider/model requests exactly", () => {
+    const models = [
+      { id: "gpt-5.1", provider: "azure-openai-responses" },
+      { id: "gpt-5.1", provider: "openai-codex" },
+    ] as Model<Api>[];
+    expect(resolveModel("openai-codex/gpt-5.1", models)).toMatchObject({
+      id: "gpt-5.1",
+      provider: "openai-codex",
+    });
+  });
+
+  it("matches case-insensitively on model id", () => {
+    expect(resolveModel("Claude-Haiku-4-5", AVAILABLE_MODELS)).toMatchObject({
+      id: "claude-haiku-4-5",
+    });
+  });
+
+  it("returns undefined for unknown models", () => {
+    expect(resolveModel("gpt-4o", AVAILABLE_MODELS)).toBeUndefined();
+    expect(resolveModel("nonexistent", AVAILABLE_MODELS)).toBeUndefined();
   });
 
   it("returns undefined for empty available list", () => {
-    expect(resolveModelId("claude-haiku-4-5", [])).toBeUndefined();
+    expect(resolveModel("claude-haiku-4-5", [])).toBeUndefined();
   });
 
-  it("prefers exact match over substring match", () => {
-    const models = [fakeModel("claude-haiku-4-5"), fakeModel("haiku")];
-    expect(resolveModelId("haiku", models)).toBe("haiku");
-  });
-
-  it("prefers case-insensitive exact match over substring match", () => {
+  it("prefers exact id match over case-insensitive", () => {
     const models = [fakeModel("claude-haiku-4-5"), fakeModel("HAIKU")];
-    // "haiku" case-insensitive matches "HAIKU" exactly before substring-matching "claude-haiku-4-5"
-    expect(resolveModelId("haiku", models)).toBe("HAIKU");
+    expect(resolveModel("HAIKU", models)).toMatchObject({ id: "HAIKU" });
   });
 });

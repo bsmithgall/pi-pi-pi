@@ -29,7 +29,6 @@ import type {
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
-
 function makeDetails(mode: "single" | "parallel" | "chain") {
   return (results: SingleResult[]): SubagentDetails => ({ mode, results });
 }
@@ -57,6 +56,8 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
   const current: SingleResult = {
     name: displayName,
     model: spec.model,
+    requestedModel: spec.requestedModel,
+    resolvedProvider: spec.resolvedProvider,
     task,
     exitCode: 0,
     messages: [],
@@ -88,9 +89,22 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
       current.stderr += chunk;
     });
 
-    for await (const line of stream) {
+    // Semantic completion: resolve when we receive `agent_end` from the
+    // pi JSON protocol. This fires well before the OS process actually
+    // exits, so we use it as the primary "done" signal.
+    let sawAgentEnd = false;
+    let resolveAgentEnd!: () => void;
+    const agentEndPromise = new Promise<void>((resolve) => {
+      resolveAgentEnd = resolve;
+    });
+
+    const processLine = (line: string) => {
       const event = parseRunEvent(line);
-      if (!event) continue;
+      if (!event) return;
+      if (event.type === "agent_end") {
+        sawAgentEnd = true;
+        resolveAgentEnd();
+      }
       const applied = applyRunEvent(event, current.messages, current.usage);
       if (applied?.isAssistant) {
         const msg = applied.message;
@@ -99,10 +113,64 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
         if (msg.errorMessage) current.errorMessage = String(msg.errorMessage);
       }
       if (applied) emitUpdate();
+    };
+
+    // Start draining stdout in the background.
+    const drainStdout = (async () => {
+      for await (const line of stream) processLine(line);
+    })();
+
+    // Wait for either:
+    //   1. Semantic completion (agent_end) — the agent is done
+    //   2. Process exit — fallback if agent_end never arrives
+    //   3. Abort signal
+    await Promise.race([
+      agentEndPromise,
+      stream.exitCode.then((code) => {
+        current.exitCode = code;
+      }),
+      ...(opts.signal
+        ? [
+            new Promise<void>((_, reject) => {
+              if (opts.signal?.aborted) reject(new Error("Subagent was aborted"));
+              else
+                opts.signal?.addEventListener(
+                  "abort",
+                  () => reject(new Error("Subagent was aborted")),
+                  { once: true },
+                );
+            }),
+          ]
+        : []),
+    ]);
+
+    if (sawAgentEnd) {
+      // Give a short grace period for the process to exit naturally.
+      // If it doesn't, terminate it so we don't hang.
+      const GRACE_MS = 250;
+      const exited = await Promise.race([
+        stream.exitCode.then((code) => {
+          current.exitCode = code;
+          return true as const;
+        }),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), GRACE_MS)),
+      ]);
+
+      if (!exited) {
+        stream.terminate();
+        // Wait briefly for the terminated process to actually close.
+        current.exitCode = await Promise.race([
+          stream.exitCode,
+          new Promise<number>((resolve) => setTimeout(() => resolve(0), 500)),
+        ]);
+      }
     }
 
-    current.exitCode = await stream.exitCode;
-    if (opts.signal?.aborted) throw new Error("Subagent was aborted");
+    // If we got here via exitCode (no agent_end), drain remaining stdout briefly.
+    if (!sawAgentEnd) {
+      await Promise.race([drainStdout, new Promise<void>((resolve) => setTimeout(resolve, 250))]);
+    }
+
     return current;
   } finally {
     if (tmpPromptPath)
@@ -231,6 +299,8 @@ export async function executeParallel(
   const allResults: SingleResult[] = tasks.map((t) => ({
     name: agentDisplayName(t.agent),
     model: t.agent.model,
+    requestedModel: t.agent.requestedModel,
+    resolvedProvider: t.agent.resolvedProvider,
     task: t.task,
     exitCode: -1,
     messages: [],

@@ -24,13 +24,20 @@ export interface RunEvent {
  *
  * The real implementation spawns `pi`; tests supply a fake async generator.
  */
+export interface RunningAgent extends AsyncIterable<string> {
+  exitCode: Promise<number>;
+  /** Terminate the child process. Called when semantic completion (agent_end)
+   *  is detected and the process hasn't exited on its own yet. */
+  terminate(): void;
+}
+
 export interface Runner {
   run(
     args: string[],
     cwd: string,
     signal: AbortSignal | undefined,
     onStderr: (chunk: string) => void,
-  ): AsyncIterable<string> & { exitCode: Promise<number> };
+  ): RunningAgent;
 }
 
 export interface AgentSpec {
@@ -38,6 +45,10 @@ export interface AgentSpec {
   model?: string;
   tools?: string[];
   systemPrompt?: string;
+  /** Original model string requested before registry resolution. */
+  requestedModel?: string;
+  /** Provider for the resolved model, when known from the registry. */
+  resolvedProvider?: string;
 }
 
 export interface UsageStats {
@@ -54,6 +65,8 @@ export interface SingleResult {
   /** Display name (from spec.name, or model id, or "agent") */
   name: string;
   model: string | undefined;
+  requestedModel?: string;
+  resolvedProvider?: string;
   task: string;
   /** -1 = still running (parallel streaming placeholder) */
   exitCode: number;

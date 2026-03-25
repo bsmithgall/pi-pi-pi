@@ -8,7 +8,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@mariozechner/pi-ai";
-import type { Runner, SingleResult, UsageStats } from "../types.js";
+import type { Runner, RunningAgent, SingleResult, UsageStats } from "../types.js";
 
 // ── Message builders ──────────────────────────────────────────────────────────
 
@@ -110,6 +110,11 @@ export function toolResultEvent(toolName = "bash"): Record<string, unknown> {
   };
 }
 
+/** An `agent_end` event, emitted by pi --mode json when the agent is done. */
+export function agentEndEvent(): Record<string, unknown> {
+  return { type: "agent_end", messages: [] };
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 /** A fake Runner that emits a fixed sequence of JSON events then exits. */
@@ -118,7 +123,7 @@ export function fakeRunner(events: Array<Record<string, unknown>>, exitCode = 0)
     run(_args, _cwd, _signal, _onStderr) {
       const lines = events.map((e) => JSON.stringify(e));
       let i = 0;
-      const iter: AsyncIterable<string> & { exitCode: Promise<number> } = {
+      const iter: RunningAgent = {
         [Symbol.asyncIterator]() {
           return {
             async next() {
@@ -128,6 +133,7 @@ export function fakeRunner(events: Array<Record<string, unknown>>, exitCode = 0)
           };
         },
         exitCode: Promise.resolve(exitCode),
+        terminate() {},
       };
       return iter;
     },

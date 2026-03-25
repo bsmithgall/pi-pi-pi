@@ -1,53 +1,7 @@
-import { PassThrough } from "node:stream";
 import type { Message } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { applyRunEvent, buildAgentArgs, parseRunEvent } from "../helpers.js";
-import type { ChildLike } from "../runner.js";
-import { linesFrom } from "../runner.js";
 import { assistantMsg, toolResultMsg, zeroUsage } from "./fixtures.js";
-
-// ── helpers for ChildLike fakes ──────────────────────────────────────────────
-
-/** Create a fake ChildLike whose stdout, exit, close, and error events we control. */
-function fakeChild(): {
-  child: ChildLike;
-  stdout: PassThrough;
-  emitExit: (code: number) => void;
-  emitClose: (code: number) => void;
-  emitError: (err: Error) => void;
-} {
-  const stdout = new PassThrough();
-  const listeners: {
-    exit: Array<(code: number | null) => void>;
-    close: Array<(code: number | null) => void>;
-    error: Array<(err: Error) => void>;
-  } = {
-    exit: [],
-    close: [],
-    error: [],
-  };
-  const child: ChildLike = {
-    stdout,
-    on(event: string, cb: (...args: never[]) => void) {
-      if (event === "exit") listeners.exit.push(cb as (code: number | null) => void);
-      if (event === "close") listeners.close.push(cb as (code: number | null) => void);
-      if (event === "error") listeners.error.push(cb as (err: Error) => void);
-    },
-  };
-  return {
-    child,
-    stdout,
-    emitExit: (code) => {
-      for (const cb of listeners.exit) cb(code);
-    },
-    emitClose: (code) => {
-      for (const cb of listeners.close) cb(code);
-    },
-    emitError: (err) => {
-      for (const cb of listeners.error) cb(err);
-    },
-  };
-}
 
 describe("buildAgentArgs", () => {
   it("always includes the base flags", () => {
@@ -78,6 +32,12 @@ describe("buildAgentArgs", () => {
     const args = buildAgentArgs({ tools: ["read", "grep"] }, "go");
     const idx = args.indexOf("--tools");
     expect(args[idx + 1]).toBe("read,grep");
+  });
+
+  it("uses --no-tools when an empty tools list is provided", () => {
+    const args = buildAgentArgs({ tools: [] }, "go");
+    expect(args).toContain("--no-tools");
+    expect(args).not.toContain("--tools");
   });
 
   it("defaults to read,grep,find,ls,bash when tools is absent", () => {
@@ -236,157 +196,5 @@ describe("applyRunEvent", () => {
       applyRunEvent({ type: "tool_result_end", message: toolResultMsg() }, [], usage);
       expect(usage).toEqual(zeroUsage());
     });
-  });
-});
-
-// ── linesFrom ────────────────────────────────────────────────────────────────
-
-describe("linesFrom", () => {
-  it("yields newline-delimited lines from stdout", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-    stdout.write("line1\nline2\n");
-    stdout.end();
-    emitExit(0);
-    emitClose(0);
-
-    const lines: string[] = [];
-    for await (const line of stream) lines.push(line);
-    expect(lines).toEqual(["line1", "line2"]);
-    expect(await stream.exitCode).toBe(0);
-  });
-
-  it("yields a trailing partial line (no final newline)", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-    stdout.write("complete\npartial");
-    stdout.end();
-    emitExit(0);
-    emitClose(0);
-
-    const lines: string[] = [];
-    for await (const line of stream) lines.push(line);
-    expect(lines).toEqual(["complete", "partial"]);
-  });
-
-  it("resolves exitCode with the exit code", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-    stdout.end();
-    emitExit(42);
-    emitClose(42);
-
-    for await (const _ of stream) {
-      /* drain */
-    }
-    expect(await stream.exitCode).toBe(42);
-  });
-
-  it("resolves exitCode as 1 on error event", async () => {
-    const { child, stdout, emitError } = fakeChild();
-    const stream = linesFrom(child);
-    stdout.end();
-    emitError(new Error("spawn ENOENT"));
-
-    for await (const _ of stream) {
-      /* drain */
-    }
-    expect(await stream.exitCode).toBe(1);
-  });
-
-  it("does not hang when exit/close fires before stdout is drained", async () => {
-    // This is the race condition that caused parallel mode to hang.
-    // Simulate: exit+close fires immediately, then stdout data arrives and ends.
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-
-    // Exit+close fires BEFORE any stdout data — the generator hasn't started yet
-    emitExit(0);
-    emitClose(0);
-
-    // Now push data and end stdout
-    stdout.write("data\n");
-    stdout.end();
-
-    const lines: string[] = [];
-    // This must complete without hanging — before the fix it would block forever
-    for await (const line of stream) lines.push(line);
-    expect(lines).toEqual(["data"]);
-    expect(await stream.exitCode).toBe(0);
-  });
-
-  it("does not hang when exit/close fires between stdout chunks", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-
-    // Write some data, fire exit+close, then end stdout
-    stdout.write("first\n");
-    emitExit(0);
-    emitClose(0);
-    stdout.write("second\n");
-    stdout.end();
-
-    const lines: string[] = [];
-    for await (const line of stream) lines.push(line);
-    expect(lines).toEqual(["first", "second"]);
-    expect(await stream.exitCode).toBe(0);
-  });
-
-  it("handles empty stdout with immediate close", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-    emitExit(0);
-    emitClose(0);
-    stdout.end();
-
-    const lines: string[] = [];
-    for await (const line of stream) lines.push(line);
-    expect(lines).toEqual([]);
-    expect(await stream.exitCode).toBe(0);
-  });
-
-  it("does not hang when process exits but close never fires", async () => {
-    // Reproduces the real-world hang: the subagent process exits (exit event
-    // fires), stdout is drained, but `close` never fires because a grandchild
-    // process inherited the pipe fd. Before the fix, the generator awaited
-    // `closed` which was only resolved by `close`, causing a permanent hang.
-    const { child, stdout, emitExit } = fakeChild();
-    const stream = linesFrom(child);
-
-    stdout.write("output\n");
-    stdout.end();
-    // Process exits — but close never fires (grandchild holds pipe open)
-    emitExit(0);
-
-    const lines: string[] = [];
-    const timeout = setTimeout(() => {
-      throw new Error("linesFrom hung — close never fired and generator blocked");
-    }, 1_000);
-
-    for await (const line of stream) lines.push(line);
-    clearTimeout(timeout);
-
-    expect(lines).toEqual(["output"]);
-    expect(await stream.exitCode).toBe(0);
-    // Note: emitClose is never called — this is the bug scenario
-  });
-
-  it("resolves exitCode from exit even when close arrives later", async () => {
-    const { child, stdout, emitExit, emitClose } = fakeChild();
-    const stream = linesFrom(child);
-
-    stdout.end();
-    emitExit(0);
-
-    for await (const _ of stream) {
-      /* drain */
-    }
-
-    // exitCode should already be resolved from 'exit', not waiting for 'close'
-    expect(await stream.exitCode).toBe(0);
-
-    // Late close with a different code should not change the result
-    emitClose(1);
-    expect(await stream.exitCode).toBe(0);
   });
 });

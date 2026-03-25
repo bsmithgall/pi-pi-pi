@@ -29,7 +29,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { resolveModelId } from "./helpers.js";
+import { resolveModel } from "./helpers.js";
 import { executeChain, executeParallel, executeSingle } from "./orchestration.js";
 import { renderCall, renderResult } from "./render.js";
 import type { AgentSpec } from "./types.js";
@@ -39,21 +39,31 @@ const TOOL_NAME = "subagent";
 
 /**
  * Validate and resolve the model field on an agent spec. If the LLM provided
- * a model string that doesn't match any available model, fall back to the
- * current session model.
+ * a model string that matches an available model (exact, case-insensitive, or
+ * substring), use the canonical ID. Otherwise, pass the original string
+ * through as-is and let the subprocess resolve it — it may have access to
+ * models the parent doesn't, or it will fail with a clear error. Silently
+ * falling back to the parent session model was confusing: the subagent result
+ * would display the parent model even though a different model was requested.
  */
 function resolveAgentSpec(spec: AgentSpec, ctx: ExtensionContext): AgentSpec {
   if (!spec.model) return spec;
 
   const available = ctx.modelRegistry.getAvailable();
-  const resolved = resolveModelId(spec.model, available);
+  const resolved = resolveModel(spec.model, available);
 
   if (resolved) {
-    return { ...spec, model: resolved };
+    return {
+      ...spec,
+      requestedModel: spec.model,
+      model: `${resolved.provider}/${resolved.id}`,
+      resolvedProvider: resolved.provider,
+    };
   }
 
-  // Requested model not found — fall back to session model
-  return { ...spec, model: ctx.model?.id };
+  // Requested model not found — pass through as-is and let the child
+  // process resolve it. It may have access to models the parent doesn't.
+  return { ...spec, requestedModel: spec.model };
 }
 
 /**

@@ -133,8 +133,15 @@ export function resolvePreviousPlaceholder(task: string, previousOutput: string)
 export function buildAgentArgs(spec: AgentSpec, task: string, systemPromptPath?: string): string[] {
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
   if (spec.model) args.push("--model", spec.model);
-  const tools = spec.tools ?? ["read", "grep", "find", "ls", "bash"];
-  args.push("--tools", tools.join(","));
+
+  if (spec.tools === undefined) {
+    args.push("--tools", "read,grep,find,ls,bash");
+  } else if (spec.tools.length === 0) {
+    args.push("--no-tools");
+  } else {
+    args.push("--tools", spec.tools.join(","));
+  }
+
   if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
   args.push(`Task: ${task}`);
   return args;
@@ -200,30 +207,31 @@ export function parseRunEvent(line: string): RunEvent | null {
 
 /**
  * Resolve a model ID string from the LLM against the available models in the
- * registry. Returns the matched model ID, or undefined if no match is found.
+ * registry. Returns the matched model object (with provider), or undefined.
  *
- * Tries, in order:
- *   1. Exact match on model ID
- *   2. Case-insensitive match on model ID
- *   3. Substring match (e.g. "haiku" matches "claude-haiku-4-5")
+ * The resolved model's provider is used to build a fully-qualified
+ * `provider/id` string for the child process, so there is no ambiguity
+ * about which provider the subprocess should use.
  *
- * If multiple models match in step 3, the first available one wins (which is
- * fine — the registry returns them in a stable order).
+ * Resolution order:
+ *   1. Fully-qualified `provider/id` (exact, case-insensitive)
+ *   2. Exact model ID match
+ *   3. Case-insensitive model ID match
  */
-export function resolveModelId(requested: string, available: Model<Api>[]): string | undefined {
+export function resolveModel(requested: string, available: Model<Api>[]): Model<Api> | undefined {
   const lower = requested.toLowerCase();
 
-  // 1. Exact match
+  // 1. Fully-qualified provider/id
+  const qualified = available.find((m) => `${m.provider}/${m.id}`.toLowerCase() === lower);
+  if (qualified) return qualified;
+
+  // 2. Exact id match
   const exact = available.find((m) => m.id === requested);
-  if (exact) return exact.id;
+  if (exact) return exact;
 
-  // 2. Case-insensitive match
+  // 3. Case-insensitive id match
   const insensitive = available.find((m) => m.id.toLowerCase() === lower);
-  if (insensitive) return insensitive.id;
-
-  // 3. Substring / fuzzy match
-  const substring = available.find((m) => m.id.toLowerCase().includes(lower));
-  if (substring) return substring.id;
+  if (insensitive) return insensitive;
 
   return undefined;
 }
