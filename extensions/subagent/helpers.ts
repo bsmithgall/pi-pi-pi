@@ -3,7 +3,7 @@
  * No I/O, no pi imports — fully unit-testable.
  */
 
-import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Message, Model } from "@mariozechner/pi-ai";
 import type { AgentSpec, DisplayItem, RunEvent, SingleResult, UsageStats } from "./types.js";
 
 export function agentDisplayName(spec: AgentSpec): string {
@@ -196,4 +196,34 @@ export function parseRunEvent(line: string): RunEvent | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a model ID string from the LLM against the available models in the
+ * registry. Returns the matched model ID, or undefined if no match is found.
+ *
+ * Tries, in order:
+ *   1. Exact match on model ID
+ *   2. Case-insensitive match on model ID
+ *   3. Substring match (e.g. "haiku" matches "claude-haiku-4-5")
+ *
+ * If multiple models match in step 3, the first available one wins (which is
+ * fine — the registry returns them in a stable order).
+ */
+export function resolveModelId(requested: string, available: Model<Api>[]): string | undefined {
+  const lower = requested.toLowerCase();
+
+  // 1. Exact match
+  const exact = available.find((m) => m.id === requested);
+  if (exact) return exact.id;
+
+  // 2. Case-insensitive match
+  const insensitive = available.find((m) => m.id.toLowerCase() === lower);
+  if (insensitive) return insensitive.id;
+
+  // 3. Substring / fuzzy match
+  const substring = available.find((m) => m.id.toLowerCase().includes(lower));
+  if (substring) return substring.id;
+
+  return undefined;
 }

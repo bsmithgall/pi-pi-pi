@@ -28,12 +28,40 @@
  *   - Planning or summarisation with a focused system prompt
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { resolveModelId } from "./helpers.js";
 import { executeChain, executeParallel, executeSingle } from "./orchestration.js";
 import { renderCall, renderResult } from "./render.js";
+import type { AgentSpec } from "./types.js";
 import { SubagentParams } from "./types.js";
 
 const TOOL_NAME = "subagent";
+
+/**
+ * Validate and resolve the model field on an agent spec. If the LLM provided
+ * a model string that doesn't match any available model, fall back to the
+ * current session model.
+ */
+function resolveAgentSpec(spec: AgentSpec, ctx: ExtensionContext): AgentSpec {
+  if (!spec.model) return spec;
+
+  const available = ctx.modelRegistry.getAvailable();
+  const resolved = resolveModelId(spec.model, available);
+
+  if (resolved) {
+    return { ...spec, model: resolved };
+  }
+
+  // Requested model not found — fall back to session model
+  return { ...spec, model: ctx.model?.id };
+}
+
+/**
+ * Resolve model IDs for all agent specs in an array of task items.
+ */
+function resolveTaskSpecs<T extends { agent: AgentSpec }>(items: T[], ctx: ExtensionContext): T[] {
+  return items.map((item) => ({ ...item, agent: resolveAgentSpec(item.agent, ctx) }));
+}
 
 /**
  * Keywords in a user prompt that signal they want subagent delegation.
@@ -101,16 +129,20 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (params.chain && params.chain.length > 0) {
-        return executeChain(params.chain, ctx.cwd, signal, onUpdate);
+        return executeChain(resolveTaskSpecs(params.chain, ctx), ctx.cwd, signal, onUpdate);
       }
 
       if (params.tasks && params.tasks.length > 0) {
-        return executeParallel(params.tasks, ctx.cwd, signal, onUpdate);
+        return executeParallel(resolveTaskSpecs(params.tasks, ctx), ctx.cwd, signal, onUpdate);
       }
 
       if (params.task) {
         return executeSingle(
-          { agent: params.agent ?? {}, task: params.task, cwd: params.cwd },
+          {
+            agent: resolveAgentSpec(params.agent ?? {}, ctx),
+            task: params.task,
+            cwd: params.cwd,
+          },
           ctx.cwd,
           signal,
           onUpdate,
