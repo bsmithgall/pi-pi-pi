@@ -78,9 +78,9 @@ function resolveTaskSpecs<T extends { agent: AgentSpec }>(items: T[], ctx: Exten
  * Matched case-insensitively against the raw input text.
  */
 const ACTIVATION_PATTERNS = [
-  /\bsubagent\b/i,
-  /\bsub-agent\b/i,
-  /\bsub agent\b/i,
+  /\bsubagents?\b/i,
+  /\bsub-agents?\b/i,
+  /\bsub agents?\b/i,
   /\bdelegate\b/i,
   /\bin parallel\b/i,
   /\bparalleli[sz]e\b/i,

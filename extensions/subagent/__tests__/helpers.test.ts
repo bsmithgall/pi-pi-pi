@@ -345,7 +345,9 @@ describe("resolvePreviousPlaceholder", () => {
 describe("shouldActivateSubagent", () => {
   it.each([
     "Use a subagent to explore this",
+    "Use subagents to explore this",
     "Can you delegate this to a sub-agent?",
+    "Look again with the sub-agents at the code",
     "Run these tasks in parallel",
     "Parallelize the search across files",
     "Parallelise the investigation",
