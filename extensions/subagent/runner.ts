@@ -14,31 +14,40 @@ import type { Runner } from "./types.js";
 export interface ChildLike {
   stdout: Readable;
   on(event: "close", cb: (code: number | null) => void): void;
+  on(event: "exit", cb: (code: number | null) => void): void;
   on(event: "error", cb: (err: Error) => void): void;
 }
 
 /**
  * Turn a child-process-like object into a newline-delimited async iterable
- * plus an `exitCode` promise. The `close` and `error` listeners are attached
- * eagerly so the event is never missed — even if it fires before stdout is
- * fully drained (a race that's common under parallel load).
+ * plus an `exitCode` promise.
+ *
+ * `exitCode` is resolved from the **`exit`** event (process exited) rather
+ * than `close` (process exited AND all stdio closed). The `close` event can
+ * be delayed indefinitely when a grandchild process inherits a pipe fd, which
+ * would cause the consumer to hang even though the subagent has finished.
+ *
+ * Because stdout is fully drained by the async generator before the consumer
+ * ever awaits `exitCode`, we don't lose any data by not waiting for `close`.
  */
 export function linesFrom(child: ChildLike): AsyncIterable<string> & { exitCode: Promise<number> } {
   let resolveExit!: (code: number) => void;
+  let exitResolved = false;
   const exitCode = new Promise<number>((res) => {
-    resolveExit = res;
+    resolveExit = (code: number) => {
+      if (!exitResolved) {
+        exitResolved = true;
+        res(code);
+      }
+    };
   });
 
-  const closed = new Promise<void>((res) => {
-    child.on("close", (code: number | null) => {
-      resolveExit(code ?? 0);
-      res();
-    });
-    child.on("error", () => {
-      resolveExit(1);
-      res();
-    });
-  });
+  // Resolve exitCode from whichever fires first: exit, close, or error.
+  // `exit` fires when the process exits (regardless of stdio state).
+  // `close` fires when stdio streams are also closed — kept as a fallback.
+  child.on("exit", (code: number | null) => resolveExit(code ?? 0));
+  child.on("close", (code: number | null) => resolveExit(code ?? 0));
+  child.on("error", () => resolveExit(1));
 
   async function* generate(): AsyncGenerator<string> {
     let buffer = "";
@@ -49,7 +58,9 @@ export function linesFrom(child: ChildLike): AsyncIterable<string> & { exitCode:
       for (const line of parts) yield line;
     }
     if (buffer) yield buffer;
-    await closed;
+    // No need to await close/exit here — stdout is fully drained, and
+    // exitCode is resolved independently. The old `await closed` would
+    // hang when `close` was delayed by inherited pipe fds.
   }
 
   return Object.assign(generate(), { exitCode });

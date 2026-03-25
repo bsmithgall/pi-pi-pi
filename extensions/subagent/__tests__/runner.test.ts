@@ -8,24 +8,28 @@ import { assistantMsg, toolResultMsg, zeroUsage } from "./fixtures.js";
 
 // ── helpers for ChildLike fakes ──────────────────────────────────────────────
 
-/** Create a fake ChildLike whose stdout and close/error events we control. */
+/** Create a fake ChildLike whose stdout, exit, close, and error events we control. */
 function fakeChild(): {
   child: ChildLike;
   stdout: PassThrough;
+  emitExit: (code: number) => void;
   emitClose: (code: number) => void;
   emitError: (err: Error) => void;
 } {
   const stdout = new PassThrough();
   const listeners: {
+    exit: Array<(code: number | null) => void>;
     close: Array<(code: number | null) => void>;
     error: Array<(err: Error) => void>;
   } = {
+    exit: [],
     close: [],
     error: [],
   };
   const child: ChildLike = {
     stdout,
     on(event: string, cb: (...args: never[]) => void) {
+      if (event === "exit") listeners.exit.push(cb as (code: number | null) => void);
       if (event === "close") listeners.close.push(cb as (code: number | null) => void);
       if (event === "error") listeners.error.push(cb as (err: Error) => void);
     },
@@ -33,6 +37,9 @@ function fakeChild(): {
   return {
     child,
     stdout,
+    emitExit: (code) => {
+      for (const cb of listeners.exit) cb(code);
+    },
     emitClose: (code) => {
       for (const cb of listeners.close) cb(code);
     },
@@ -236,10 +243,11 @@ describe("applyRunEvent", () => {
 
 describe("linesFrom", () => {
   it("yields newline-delimited lines from stdout", async () => {
-    const { child, stdout, emitClose } = fakeChild();
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
     stdout.write("line1\nline2\n");
     stdout.end();
+    emitExit(0);
     emitClose(0);
 
     const lines: string[] = [];
@@ -249,10 +257,11 @@ describe("linesFrom", () => {
   });
 
   it("yields a trailing partial line (no final newline)", async () => {
-    const { child, stdout, emitClose } = fakeChild();
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
     stdout.write("complete\npartial");
     stdout.end();
+    emitExit(0);
     emitClose(0);
 
     const lines: string[] = [];
@@ -260,10 +269,11 @@ describe("linesFrom", () => {
     expect(lines).toEqual(["complete", "partial"]);
   });
 
-  it("resolves exitCode with the close code", async () => {
-    const { child, stdout, emitClose } = fakeChild();
+  it("resolves exitCode with the exit code", async () => {
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
     stdout.end();
+    emitExit(42);
     emitClose(42);
 
     for await (const _ of stream) {
@@ -284,13 +294,14 @@ describe("linesFrom", () => {
     expect(await stream.exitCode).toBe(1);
   });
 
-  it("does not hang when close fires before stdout is drained", async () => {
+  it("does not hang when exit/close fires before stdout is drained", async () => {
     // This is the race condition that caused parallel mode to hang.
-    // Simulate: close fires immediately, then stdout data arrives and ends.
-    const { child, stdout, emitClose } = fakeChild();
+    // Simulate: exit+close fires immediately, then stdout data arrives and ends.
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
 
-    // Close fires BEFORE any stdout data — the generator hasn't started yet
+    // Exit+close fires BEFORE any stdout data — the generator hasn't started yet
+    emitExit(0);
     emitClose(0);
 
     // Now push data and end stdout
@@ -304,12 +315,13 @@ describe("linesFrom", () => {
     expect(await stream.exitCode).toBe(0);
   });
 
-  it("does not hang when close fires between stdout chunks", async () => {
-    const { child, stdout, emitClose } = fakeChild();
+  it("does not hang when exit/close fires between stdout chunks", async () => {
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
 
-    // Write some data, fire close, then end stdout
+    // Write some data, fire exit+close, then end stdout
     stdout.write("first\n");
+    emitExit(0);
     emitClose(0);
     stdout.write("second\n");
     stdout.end();
@@ -321,14 +333,60 @@ describe("linesFrom", () => {
   });
 
   it("handles empty stdout with immediate close", async () => {
-    const { child, stdout, emitClose } = fakeChild();
+    const { child, stdout, emitExit, emitClose } = fakeChild();
     const stream = linesFrom(child);
+    emitExit(0);
     emitClose(0);
     stdout.end();
 
     const lines: string[] = [];
     for await (const line of stream) lines.push(line);
     expect(lines).toEqual([]);
+    expect(await stream.exitCode).toBe(0);
+  });
+
+  it("does not hang when process exits but close never fires", async () => {
+    // Reproduces the real-world hang: the subagent process exits (exit event
+    // fires), stdout is drained, but `close` never fires because a grandchild
+    // process inherited the pipe fd. Before the fix, the generator awaited
+    // `closed` which was only resolved by `close`, causing a permanent hang.
+    const { child, stdout, emitExit } = fakeChild();
+    const stream = linesFrom(child);
+
+    stdout.write("output\n");
+    stdout.end();
+    // Process exits — but close never fires (grandchild holds pipe open)
+    emitExit(0);
+
+    const lines: string[] = [];
+    const timeout = setTimeout(() => {
+      throw new Error("linesFrom hung — close never fired and generator blocked");
+    }, 1_000);
+
+    for await (const line of stream) lines.push(line);
+    clearTimeout(timeout);
+
+    expect(lines).toEqual(["output"]);
+    expect(await stream.exitCode).toBe(0);
+    // Note: emitClose is never called — this is the bug scenario
+  });
+
+  it("resolves exitCode from exit even when close arrives later", async () => {
+    const { child, stdout, emitExit, emitClose } = fakeChild();
+    const stream = linesFrom(child);
+
+    stdout.end();
+    emitExit(0);
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    // exitCode should already be resolved from 'exit', not waiting for 'close'
+    expect(await stream.exitCode).toBe(0);
+
+    // Late close with a different code should not change the result
+    emitClose(1);
     expect(await stream.exitCode).toBe(0);
   });
 });
