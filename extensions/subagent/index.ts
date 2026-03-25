@@ -115,6 +115,9 @@ export default function (pi: ExtensionAPI) {
     ].join(" "),
     promptSnippet:
       "Delegate tasks to subagents with isolated context windows. Supports single, parallel, and chained execution.",
+    promptGuidelines: [
+      "When the user asks you to delegate, spawn, or use subagents, call the subagent tool directly.",
+    ],
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
