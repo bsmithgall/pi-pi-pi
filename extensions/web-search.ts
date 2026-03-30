@@ -21,6 +21,7 @@ import type {
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
+const SEARCH_PROVIDER = "anthropic";
 const SEARCH_MODEL_ID = "claude-haiku-4-5";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MAX_USES = 5;
@@ -33,6 +34,25 @@ interface SearchDetails {
   result?: string;
   error?: string;
   status?: string;
+}
+
+async function getAnthropicApiKey(modelRegistry: {
+  find?: (provider: string, modelId: string) => unknown;
+  getApiKey?: (model: unknown) => Promise<string | undefined>;
+  getApiKeyForProvider?: (provider: string) => Promise<string | undefined>;
+}): Promise<string | undefined> {
+  if (typeof modelRegistry.getApiKeyForProvider === "function") {
+    return await modelRegistry.getApiKeyForProvider(SEARCH_PROVIDER);
+  }
+
+  if (typeof modelRegistry.find === "function" && typeof modelRegistry.getApiKey === "function") {
+    const model = modelRegistry.find(SEARCH_PROVIDER, SEARCH_MODEL_ID);
+    if (model) {
+      return await modelRegistry.getApiKey(model);
+    }
+  }
+
+  return undefined;
 }
 
 async function runWebSearch(
@@ -140,14 +160,9 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
     }),
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const model = ctx.modelRegistry.find("anthropic", SEARCH_MODEL_ID);
-      if (!model) {
-        throw new Error(`Model ${SEARCH_MODEL_ID} not found in registry`);
-      }
-
-      const apiKey = await ctx.modelRegistry.getApiKey(model);
+      const apiKey = await getAnthropicApiKey(ctx.modelRegistry);
       if (!apiKey) {
-        throw new Error(`No API key available for ${SEARCH_MODEL_ID}`);
+        throw new Error(`No Anthropic API key available (tried provider and model-based lookup)`);
       }
 
       onUpdate?.({
