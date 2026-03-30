@@ -129,9 +129,29 @@ export function resolvePreviousPlaceholder(task: string, previousOutput: string)
 /**
  * Build the CLI argument list for a `pi` subagent invocation.
  * Pure — no side effects, fully testable.
+ *
+ * When `sessionDir` is provided the child process persists its session there,
+ * making the full conversation available for `pi --session <file>` or
+ * `pi --export <file>` after the run.
  */
-export function buildAgentArgs(spec: AgentSpec, task: string, systemPromptPath?: string): string[] {
-  const args: string[] = ["--mode", "json", "-p", "--no-session"];
+export function buildAgentArgs(
+  spec: AgentSpec,
+  task: string,
+  systemPromptPath?: string,
+  sessionDir?: string,
+): string[] {
+  const args: string[] = ["--mode", "json", "-p"];
+
+  if (sessionDir) {
+    args.push("--session-dir", sessionDir);
+  } else {
+    args.push("--no-session");
+  }
+
+  // Prevent child processes from loading extensions (including this one),
+  // which would let subagents recursively spawn their own subagents.
+  args.push("--no-extensions");
+
   if (spec.model) args.push("--model", spec.model);
 
   if (spec.tools === undefined) {
@@ -217,6 +237,9 @@ export function parseRunEvent(line: string): RunEvent | null {
  *   1. Fully-qualified `provider/id` (exact, case-insensitive)
  *   2. Exact model ID match
  *   3. Case-insensitive model ID match
+ *   4. Substring match on model ID (case-insensitive) — picks the shortest
+ *      matching ID to prefer e.g. "claude-opus-4-5" over
+ *      "claude-opus-4-5-20251101" when the user says "opus".
  */
 export function resolveModel(requested: string, available: Model<Api>[]): Model<Api> | undefined {
   const lower = requested.toLowerCase();
@@ -232,6 +255,13 @@ export function resolveModel(requested: string, available: Model<Api>[]): Model<
   // 3. Case-insensitive id match
   const insensitive = available.find((m) => m.id.toLowerCase() === lower);
   if (insensitive) return insensitive;
+
+  // 4. Substring match — pick shortest ID to prefer canonical names over
+  //    dated variants (e.g. "claude-opus-4-5" over "claude-opus-4-5-20251101").
+  const substringMatches = available
+    .filter((m) => m.id.toLowerCase().includes(lower))
+    .sort((a, b) => a.id.length - b.id.length);
+  if (substringMatches.length > 0) return substringMatches[0];
 
   return undefined;
 }

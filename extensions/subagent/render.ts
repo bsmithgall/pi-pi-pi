@@ -169,6 +169,9 @@ function renderResultBlockExpanded(
 
   const usageStr = formatUsageStats(r.usage, r.model);
   if (usageStr) container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+  if (r.sessionFile) {
+    container.addChild(new Text(theme.fg("dim", `session: ${shortenPath(r.sessionFile)}`), 0, 0));
+  }
 
   return container;
 }
@@ -321,6 +324,9 @@ function renderSingleResult(
     if (usageStr) {
       container.addChild(new Spacer(1));
       container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+    }
+    if (r.sessionFile) {
+      container.addChild(new Text(theme.fg("dim", `session: ${shortenPath(r.sessionFile)}`), 0, 0));
     }
     return container;
   }

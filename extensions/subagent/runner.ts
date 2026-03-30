@@ -4,11 +4,38 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import type { Runner } from "./types.js";
+
+/**
+ * Resolve the command + args needed to invoke `pi` as a subprocess.
+ *
+ * When the current process was launched via a script (e.g.
+ * `node /path/to/pi`), we re-use that exact invocation so the child
+ * works even when `pi` isn't on PATH (common when running from a
+ * directory with its own package.json / node_modules).
+ */
+function getPiInvocation(args: string[]): { command: string; args: string[] } {
+  const currentScript = process.argv[1];
+  if (currentScript && existsSync(currentScript)) {
+    return { command: process.execPath, args: [currentScript, ...args] };
+  }
+
+  // Fallback: if the binary itself *is* pi (standalone / pkg build),
+  // invoke it directly.
+  const execName = basename(process.execPath).toLowerCase();
+  if (!/^(node|bun)(\.exe)?$/.test(execName)) {
+    return { command: process.execPath, args };
+  }
+
+  return { command: "pi", args };
+}
 
 export const spawnRunner: Runner = {
   run(args, cwd, signal, onStderr) {
-    const proc = spawn("pi", args, {
+    const invocation = getPiInvocation(args);
+    const proc = spawn(invocation.command, invocation.args, {
       cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],

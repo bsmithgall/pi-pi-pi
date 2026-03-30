@@ -77,6 +77,10 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
   let tmpPromptDir: string | null = null;
   let tmpPromptPath: string | null = null;
 
+  // Persist the child session so the full conversation is available via
+  // `pi --session <file>` or `pi --export <file>` after the run.
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
+
   try {
     if (spec.systemPrompt?.trim()) {
       const tmp = writePromptToTempFile(displayName, spec.systemPrompt);
@@ -84,7 +88,7 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
       tmpPromptPath = tmp.filePath;
     }
 
-    const args = buildAgentArgs(spec, task, tmpPromptPath ?? undefined);
+    const args = buildAgentArgs(spec, task, tmpPromptPath ?? undefined, sessionDir);
     const stream = runner.run(args, opts.cwd ?? defaultCwd, opts.signal, (chunk) => {
       current.stderr += chunk;
     });
@@ -169,6 +173,16 @@ export async function runSingleAgent(opts: RunAgentOpts): Promise<SingleResult> 
     // If we got here via exitCode (no agent_end), drain remaining stdout briefly.
     if (!sawAgentEnd) {
       await Promise.race([drainStdout, new Promise<void>((resolve) => setTimeout(resolve, 250))]);
+    }
+
+    // Find the session file that pi created in our temp session dir.
+    try {
+      const files = fs.readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"));
+      if (files.length > 0) {
+        current.sessionFile = path.join(sessionDir, files[0]);
+      }
+    } catch {
+      /* ignore — session dir may not exist if process failed early */
     }
 
     return current;

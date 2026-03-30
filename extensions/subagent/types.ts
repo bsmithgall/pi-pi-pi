@@ -76,6 +76,8 @@ export interface SingleResult {
   stopReason?: string;
   errorMessage?: string;
   step?: number;
+  /** Path to the subagent's session file, when sessions are persisted. */
+  sessionFile?: string;
 }
 
 export interface SubagentDetails {

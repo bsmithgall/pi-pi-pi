@@ -430,4 +430,24 @@ describe("resolveModel", () => {
     const models = [fakeModel("claude-haiku-4-5"), fakeModel("HAIKU")];
     expect(resolveModel("HAIKU", models)).toMatchObject({ id: "HAIKU" });
   });
+
+  it("matches by substring (case-insensitive)", () => {
+    expect(resolveModel("opus", AVAILABLE_MODELS)).toMatchObject({ id: "claude-opus-4-5" });
+    expect(resolveModel("haiku", AVAILABLE_MODELS)).toMatchObject({ id: "claude-haiku-4-5" });
+    expect(resolveModel("sonnet", AVAILABLE_MODELS)).toMatchObject({ id: "claude-sonnet-4-5" });
+  });
+
+  it("substring match prefers shortest model ID", () => {
+    const models = [fakeModel("claude-opus-4-5-20251101"), fakeModel("claude-opus-4-5")];
+    expect(resolveModel("opus", models)).toMatchObject({ id: "claude-opus-4-5" });
+  });
+
+  it("substring match returns undefined when no model contains the string", () => {
+    expect(resolveModel("gemini", AVAILABLE_MODELS)).toBeUndefined();
+  });
+
+  it("prefers exact match over substring match", () => {
+    const models = [fakeModel("haiku"), fakeModel("claude-haiku-4-5")];
+    expect(resolveModel("haiku", models)).toMatchObject({ id: "haiku" });
+  });
 });

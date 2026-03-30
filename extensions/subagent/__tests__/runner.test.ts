@@ -10,6 +10,7 @@ describe("buildAgentArgs", () => {
     expect(args).toContain("json");
     expect(args).toContain("-p");
     expect(args).toContain("--no-session");
+    expect(args).toContain("--no-extensions");
   });
 
   it("appends the task as the final argument", () => {
@@ -55,6 +56,19 @@ describe("buildAgentArgs", () => {
 
   it("omits --append-system-prompt when systemPromptPath is absent", () => {
     expect(buildAgentArgs({}, "go")).not.toContain("--append-system-prompt");
+  });
+
+  it("uses --session-dir instead of --no-session when sessionDir is provided", () => {
+    const args = buildAgentArgs({}, "go", undefined, "/tmp/sessions");
+    expect(args).toContain("--session-dir");
+    expect(args[args.indexOf("--session-dir") + 1]).toBe("/tmp/sessions");
+    expect(args).not.toContain("--no-session");
+  });
+
+  it("uses --no-session when sessionDir is not provided", () => {
+    const args = buildAgentArgs({}, "go");
+    expect(args).toContain("--no-session");
+    expect(args).not.toContain("--session-dir");
   });
 });
 
