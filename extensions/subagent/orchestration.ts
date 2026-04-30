@@ -361,8 +361,8 @@ export async function executeParallel(
   const successCount = results.filter((r) => r.exitCode === 0).length;
   const summaries = results.map((r) => {
     const out = getFinalOutput(r.messages);
-    const preview = out.slice(0, 100) + (out.length > 100 ? "..." : "");
-    return `[${r.name}] ${r.exitCode === 0 ? "completed" : "failed"}: ${preview || "(no output)"}`;
+    const status = r.exitCode === 0 ? "completed" : "failed";
+    return `[${r.name}] ${status}:\n${out || "(no output)"}`;
   });
 
   return {

@@ -28,7 +28,7 @@
  *   - Planning or summarisation with a focused system prompt
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { resolveModel } from "./helpers.js";
 import { executeChain, executeParallel, executeSingle } from "./orchestration.js";
 import { renderCall, renderResult } from "./render.js";
@@ -98,89 +98,113 @@ function removeSubagent(tools: string[]): string[] {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerTool({
-    name: TOOL_NAME,
-    label: "Subagent",
-    description: [
+  /**
+   * Build the tool description dynamically so it includes the exact model IDs
+   * available in the current session. This eliminates guesswork — the LLM sees
+   * the real IDs and can copy them verbatim.
+   */
+  function buildDescription(registry: ModelRegistry): string {
+    const models = registry.getAvailable();
+    const modelList = models.map((m) => `${m.provider}/${m.id}`).join(", ");
+    return [
       "Delegate tasks to general-purpose subagents with isolated context windows.",
       "Each agent is defined inline — no pre-registered agent files needed.",
-      "Specify the model (e.g. claude-haiku-4-5, claude-sonnet-4-5),",
-      "which tools the agent can use, and an optional system prompt.",
+      "Specify the model, which tools the agent can use, and an optional system prompt.",
       "Supports three modes:",
       "  single   — one agent, one task",
       "  parallel — multiple agents run concurrently (tasks array)",
       "  chain    — sequential steps, each receiving the prior output via {previous}",
       "Good for: fast exploration with Haiku, parallelising independent research with Sonnet,",
       "or focused planning with a trimmed tool set.",
-    ].join(" "),
-    promptSnippet:
-      "Delegate tasks to subagents with isolated context windows. Supports single, parallel, and chained execution.",
-    promptGuidelines: [
-      "When the user asks you to delegate, spawn, or use subagents, call the subagent tool directly.",
-    ],
-    parameters: SubagentParams,
+      "",
+      `Available models (use the exact provider/id string): ${modelList}`,
+    ].join(" ");
+  }
 
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const hasChain = (params.chain?.length ?? 0) > 0;
-      const hasTasks = (params.tasks?.length ?? 0) > 0;
-      // Treat { task } without { agent } as single mode with default agent spec,
-      // since models frequently omit the agent key when all its fields are optional.
-      const hasSingle = Boolean(params.task);
-      const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+  function registerSubagentTool(description: string) {
+    pi.registerTool({
+      name: TOOL_NAME,
+      label: "Subagent",
+      description,
+      promptSnippet:
+        "Delegate tasks to subagents with isolated context windows. Supports single, parallel, and chained execution.",
+      promptGuidelines: [
+        "When the user asks you to delegate, spawn, or use subagents, call the subagent tool directly.",
+      ],
+      parameters: SubagentParams,
 
-      if (modeCount === 0) {
-        throw new Error(
-          "No valid parameters received. This can happen if the tool arguments JSON was malformed. " +
-            'Please retry with: { task: "...", agent: { model: "..." } }',
+      async execute(_toolCallId, params, signal, onUpdate, ctx) {
+        const hasChain = (params.chain?.length ?? 0) > 0;
+        const hasTasks = (params.tasks?.length ?? 0) > 0;
+        // Treat { task } without { agent } as single mode with default agent spec,
+        // since models frequently omit the agent key when all its fields are optional.
+        const hasSingle = Boolean(params.task);
+        const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+
+        if (modeCount === 0) {
+          throw new Error(
+            "No valid parameters received. This can happen if the tool arguments JSON was malformed. " +
+              'Please retry with: { task: "...", agent: { model: "..." } }',
+          );
+        }
+
+        if (modeCount !== 1) {
+          throw new Error(
+            "Invalid parameters: provide exactly one of { agent+task }, { task }, { tasks }, or { chain }.",
+          );
+        }
+
+        if (params.chain && params.chain.length > 0) {
+          return executeChain(resolveTaskSpecs(params.chain, ctx), ctx.cwd, signal, onUpdate);
+        }
+
+        if (params.tasks && params.tasks.length > 0) {
+          return executeParallel(resolveTaskSpecs(params.tasks, ctx), ctx.cwd, signal, onUpdate);
+        }
+
+        if (params.task) {
+          return executeSingle(
+            {
+              agent: resolveAgentSpec(params.agent ?? {}, ctx),
+              task: params.task,
+              cwd: params.cwd,
+            },
+            ctx.cwd,
+            signal,
+            onUpdate,
+          );
+        }
+
+        throw new Error("Invalid parameters.");
+      },
+
+      renderCall(args, theme, _context) {
+        return renderCall(args, theme);
+      },
+
+      renderResult(result, _opts, theme, context) {
+        return renderResult(
+          result as Parameters<typeof renderResult>[0],
+          context?.expanded ?? false,
+          theme,
         );
-      }
+      },
+    });
+  }
 
-      if (modeCount !== 1) {
-        throw new Error(
-          "Invalid parameters: provide exactly one of { agent+task }, { task }, { tasks }, or { chain }.",
-        );
-      }
+  // Register with a placeholder description; re-registered on session_start
+  // with the full model list once the registry is populated.
+  registerSubagentTool(
+    "Delegate tasks to general-purpose subagents with isolated context windows.",
+  );
 
-      if (params.chain && params.chain.length > 0) {
-        return executeChain(resolveTaskSpecs(params.chain, ctx), ctx.cwd, signal, onUpdate);
-      }
-
-      if (params.tasks && params.tasks.length > 0) {
-        return executeParallel(resolveTaskSpecs(params.tasks, ctx), ctx.cwd, signal, onUpdate);
-      }
-
-      if (params.task) {
-        return executeSingle(
-          {
-            agent: resolveAgentSpec(params.agent ?? {}, ctx),
-            task: params.task,
-            cwd: params.cwd,
-          },
-          ctx.cwd,
-          signal,
-          onUpdate,
-        );
-      }
-
-      throw new Error("Invalid parameters.");
-    },
-
-    renderCall(args, theme, _context) {
-      return renderCall(args, theme);
-    },
-
-    renderResult(result, _opts, theme, context) {
-      return renderResult(
-        result as Parameters<typeof renderResult>[0],
-        context?.expanded ?? false,
-        theme,
-      );
-    },
-  });
-
-  // Start with subagent inactive — remove it from the default active tool set.
-  pi.on("session_start", () => {
+  // Start with subagent inactive and re-register with the real model list
+  // now that the registry is populated.
+  pi.on("session_start", (_event, ctx) => {
     pi.setActiveTools(removeSubagent(pi.getActiveTools()));
+    // Re-register the tool with the full description including available models.
+    // registerTool overwrites the previous registration.
+    registerSubagentTool(buildDescription(ctx.modelRegistry));
   });
 
   // Activate the subagent tool when the user's prompt signals delegation intent.

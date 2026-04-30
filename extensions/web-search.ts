@@ -36,7 +36,7 @@ interface SearchDetails {
   status?: string;
 }
 
-async function getAnthropicApiKey(modelRegistry: {
+export async function getAnthropicApiKey(modelRegistry: {
   find?: (provider: string, modelId: string) => unknown;
   getApiKey?: (model: unknown) => Promise<string | undefined>;
   getApiKeyForProvider?: (provider: string) => Promise<string | undefined>;
