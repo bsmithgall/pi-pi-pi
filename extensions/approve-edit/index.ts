@@ -265,6 +265,38 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Intercept tool calls
+  /** Prompt the user to approve a bash command while the bash gate is active. */
+  async function reviewBashCommand(ctx: ExtensionContext, command: string): Promise<boolean> {
+    const action = await ctx.ui.custom<"approve" | "reject">(
+      (
+        _tui: TuiHandle,
+        theme: ThemeHandle,
+        _kb: unknown,
+        done: (r: "approve" | "reject") => void,
+      ) => {
+        const label =
+          theme.fg("warning", "bash gate active") + theme.fg("muted", " — approve this command?");
+        const preview = command.length > 60 ? `${command.slice(0, 60)}…` : command;
+        const lines = [
+          label,
+          theme.fg("dim", "$ ") + preview,
+          "",
+          theme.fg("muted", "y approve · n reject"),
+        ];
+        return {
+          render: () => lines,
+          invalidate: () => {},
+          handleInput: (data: string) => {
+            if (data === "y") done("approve");
+            else if (data === "n" || data === "\x1b") done("reject");
+          },
+        };
+      },
+      { overlay: true, overlayOptions: { anchor: "top-center", width: "80%" } },
+    );
+    return action === "approve";
+  }
+
   pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult | undefined> => {
     if (getMode() !== "review") return undefined;
 
@@ -289,8 +321,20 @@ export default function (pi: ExtensionAPI) {
 
     return withReviewLock(async () => {
       if (isToolCallEventType("edit", event)) {
-        const { path, oldText, newText } = event.input;
-        return reviewChange(ctx, normalizePath(path), oldText, newText, "edit");
+        const { path, edits } = event.input;
+        const normalizedPath = normalizePath(path);
+        // Review each edit in the batch sequentially. If any is rejected, block the whole call.
+        for (const edit of edits) {
+          const result = await reviewChange(
+            ctx,
+            normalizedPath,
+            edit.oldText,
+            edit.newText,
+            "edit",
+          );
+          if (result?.block) return result;
+        }
+        return undefined;
       }
       if (isToolCallEventType("write", event)) {
         const { path, content } = event.input;

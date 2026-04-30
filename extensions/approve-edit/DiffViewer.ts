@@ -24,6 +24,7 @@ export interface TuiHandle {
 /** Minimal subset of Theme used by DiffViewer. */
 export interface ThemeHandle {
   fg(color: string, text: string): string;
+  bold(text: string): string;
 }
 
 export interface DiffViewerOptions {

@@ -13,11 +13,7 @@
  * can use to answer the user's question.
  */
 
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ToolRenderResultOptions,
-} from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
@@ -192,13 +188,8 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       );
     },
 
-    renderResult(
-      result: AgentToolResult<SearchDetails>,
-      _opts: ToolRenderResultOptions,
-      theme,
-      context,
-    ) {
-      const details = result.details;
+    renderResult(result, _opts, theme, context) {
+      const details = (result as AgentToolResult<SearchDetails>).details;
 
       if (context?.isPartial) {
         const query = details?.query ?? "";

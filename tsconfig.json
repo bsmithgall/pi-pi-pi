@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@mariozechner/pi-coding-agent/dist/*": ["./node_modules/@mariozechner/pi-coding-agent/dist/*"]
+    },
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": ["extensions/**/*.ts"],
+  "exclude": ["extensions/**/__tests__/**"]
+}
